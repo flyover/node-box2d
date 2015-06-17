@@ -5,18 +5,25 @@
   "homepage": "http://flyovergames.com",
   "description": "Node Box2D Package",
   "contributors": [
-    {
-      "name": "Isaac Burns",
-      "email": "isaacburns@gmail.com"
-    }
+    "Isaac Burns <isaacburns@gmail.com>"
   ],
   "main": "node-box2d.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/flyover/node-box2d.git"
+    "url": "git+https://github.com/flyover/node-box2d.git"
   },
   "license": "MIT",
   "dependencies": {
     "nan": "^1.4"
-  }
+  },
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "gypfile": true,
+  "bugs": {
+    "url": "https://github.com/flyover/node-box2d/issues"
+  },
+  "keywords": [
+    "Box2D"
+  ]
 }
