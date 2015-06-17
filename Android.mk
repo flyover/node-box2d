@@ -21,10 +21,13 @@ LOCAL_SRC_FILES += box2d/Box2D/Box2D/Collision/Shapes/b2EdgeShape.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Collision/Shapes/b2PolygonShape.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2BlockAllocator.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2Draw.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2FreeList.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2Math.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2Settings.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2StackAllocator.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2Stat.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2Timer.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Common/b2TrackedBlock.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/b2Body.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/b2ContactManager.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/b2Fixture.cpp
@@ -52,7 +55,18 @@ LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/Joints/b2RevoluteJoint.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/Joints/b2RopeJoint.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/Joints/b2WeldJoint.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Dynamics/Joints/b2WheelJoint.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2Particle.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2ParticleAssembly.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2ParticleGroup.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2ParticleSystem.cpp
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2VoronoiDiagram.cpp
 LOCAL_SRC_FILES += box2d/Box2D/Box2D/Rope/b2Rope.cpp
+ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
+LOCAL_ARM_MODE := arm
+LOCAL_ARM_NEON := true
+LOCAL_CFLAGS += '-DLIQUIDFUN_SIMD_NEON' -mfloat-abi=softfp -mfpu=neon
+LOCAL_SRC_FILES += box2d/Box2D/Box2D/Particle/b2ParticleAssembly.neon.s
+endif
 LOCAL_STATIC_LIBRARIES := node
 include $(BUILD_STATIC_LIBRARY)
 

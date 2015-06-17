@@ -6337,6 +6337,945 @@ CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapColor, m_color, float32, b)
 
 //// b2Draw
 
+#if 1 // B2_ENABLE_PARTICLE
+
+//// b2Particle
+
+//// b2ParticleColor
+
+class WrapParticleColor : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+	static Handle<Object> NewInstance();
+	static Handle<Object> NewInstance(const b2ParticleColor& o);
+
+private:
+	b2ParticleColor m_particle_color;
+
+private:
+	WrapParticleColor(uint8 r, uint8 g, uint8 b, uint8 a) : m_particle_color(r, g, b, a) {}
+	~WrapParticleColor() {}
+
+public:
+	const b2ParticleColor& GetParticleColor() const { return m_particle_color; }
+	void SetParticleColor(const b2ParticleColor& particle_color) { m_particle_color = particle_color; } // struct copy
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_MEMBER_DECLARE(r)
+	CLASS_MEMBER_DECLARE(g)
+	CLASS_MEMBER_DECLARE(b)
+	CLASS_MEMBER_DECLARE(a)
+};
+
+Persistent<Function> WrapParticleColor::g_constructor;
+
+void WrapParticleColor::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleColor = NanNew<FunctionTemplate>(New);
+	tplParticleColor->SetClassName(NanNew<String>("b2ParticleColor"));
+	tplParticleColor->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_MEMBER_APPLY(tplParticleColor, r)
+	CLASS_MEMBER_APPLY(tplParticleColor, g)
+	CLASS_MEMBER_APPLY(tplParticleColor, b)
+	CLASS_MEMBER_APPLY(tplParticleColor, a)
+	NanAssignPersistent(g_constructor, tplParticleColor->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleColor"), NanNew<Function>(g_constructor));
+}
+
+Handle<Object> WrapParticleColor::NewInstance()
+{
+	NanEscapableScope();
+	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
+	return NanEscapeScope(instance);
+}
+
+Handle<Object> WrapParticleColor::NewInstance(const b2ParticleColor& o)
+{
+	NanEscapableScope();
+	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
+	WrapParticleColor* that = node::ObjectWrap::Unwrap<WrapParticleColor>(instance);
+	that->SetParticleColor(o);
+	return NanEscapeScope(instance);
+}
+
+NAN_METHOD(WrapParticleColor::New)
+{
+	NanScope();
+	uint8 r = (args.Length() > 0) ? (uint8) args[0]->NumberValue() : 0;
+	uint8 g = (args.Length() > 1) ? (uint8) args[1]->NumberValue() : 0;
+	uint8 b = (args.Length() > 2) ? (uint8) args[2]->NumberValue() : 0;
+	uint8 a = (args.Length() > 3) ? (uint8) args[3]->NumberValue() : 0;
+	WrapParticleColor* that = new WrapParticleColor(r, g, b, a);
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleColor, m_particle_color, uint8, r)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleColor, m_particle_color, uint8, g)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleColor, m_particle_color, uint8, b)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleColor, m_particle_color, uint8, a)
+
+//// b2ParticleDef
+
+class WrapParticleDef : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+
+private:
+	b2ParticleDef m_pd;
+	Persistent<Object> m_pd_position;	// m_pd.position
+	Persistent<Object> m_pd_velocity;	// m_pd.velocity
+	Persistent<Object> m_pd_color;		// m_pd.color
+	Persistent<Value> m_pd_userData;	// m_pd.userData
+
+private:
+	WrapParticleDef()
+	{
+		// create javascript objects
+		NanAssignPersistent(m_pd_position, WrapVec2::NewInstance(m_pd.position));
+		NanAssignPersistent(m_pd_velocity, WrapVec2::NewInstance(m_pd.velocity));
+		NanAssignPersistent(m_pd_color, WrapParticleColor::NewInstance(m_pd.color));
+	}
+	~WrapParticleDef()
+	{
+		NanDisposePersistent(m_pd_position);
+		NanDisposePersistent(m_pd_velocity);
+		NanDisposePersistent(m_pd_color);
+		NanDisposePersistent(m_pd_userData);
+	}
+
+public:
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+		m_pd.position = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pd_position))->GetVec2(); // struct copy
+		m_pd.velocity = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pd_velocity))->GetVec2(); // struct copy
+		m_pd.color = node::ObjectWrap::Unwrap<WrapParticleColor>(NanNew<Object>(m_pd_color))->GetParticleColor(); // struct copy
+		//m_pd.userData; // not used
+	}
+
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pd_position))->SetVec2(m_pd.position);
+		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pd_velocity))->SetVec2(m_pd.velocity);
+		node::ObjectWrap::Unwrap<WrapParticleColor>(NanNew<Object>(m_pd_color))->SetParticleColor(m_pd.color);
+		//m_pd.userData; // not used
+	}
+
+	b2ParticleDef& GetParticleDef() { return m_pd; }
+
+	const b2ParticleDef& UseParticleDef() { SyncPull(); return GetParticleDef(); }
+
+	Handle<Value> GetUserDataHandle() { return NanNew<Value>(m_pd_userData); }
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_MEMBER_DECLARE(flags)
+	CLASS_MEMBER_DECLARE(position)
+	CLASS_MEMBER_DECLARE(velocity)
+	CLASS_MEMBER_DECLARE(color)
+	CLASS_MEMBER_DECLARE(lifetime)
+	CLASS_MEMBER_DECLARE(userData)
+	//b2ParticleGroup* group;
+};
+
+Persistent<Function> WrapParticleDef::g_constructor;
+
+void WrapParticleDef::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleDef = NanNew<FunctionTemplate>(New);
+	tplParticleDef->SetClassName(NanNew<String>("b2ParticleDef"));
+	tplParticleDef->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_MEMBER_APPLY(tplParticleDef, flags)
+	CLASS_MEMBER_APPLY(tplParticleDef, position)
+	CLASS_MEMBER_APPLY(tplParticleDef, velocity)
+	CLASS_MEMBER_APPLY(tplParticleDef, color)
+	CLASS_MEMBER_APPLY(tplParticleDef, lifetime)
+	CLASS_MEMBER_APPLY(tplParticleDef, userData)
+	//b2ParticleGroup* group;
+	NanAssignPersistent(g_constructor, tplParticleDef->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleDef"), NanNew<Function>(g_constructor));
+}
+
+NAN_METHOD(WrapParticleDef::New)
+{
+	NanScope();
+	WrapParticleDef* that = new WrapParticleDef();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapParticleDef, m_pd, uint32, flags				)
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleDef, m_pd, position					) // m_pd_position
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleDef, m_pd, velocity					) // m_pd_velocity
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleDef, m_pd, color						) // m_pd_color
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleDef, m_pd, float32, lifetime			)
+CLASS_MEMBER_IMPLEMENT_VALUE	(WrapParticleDef, m_pd, userData					) // m_pd_userData
+//b2ParticleGroup* group;
+
+//// b2ParticleHandle
+
+class WrapParticleHandle : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+	static Handle<Object> NewInstance();
+
+private:
+	b2ParticleHandle m_particle_handle;
+
+private:
+	WrapParticleHandle() {}
+	~WrapParticleHandle() {}
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_METHOD_DECLARE(GetIndex)
+};
+
+Persistent<Function> WrapParticleHandle::g_constructor;
+
+void WrapParticleHandle::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleHandle = NanNew<FunctionTemplate>(New);
+	tplParticleHandle->SetClassName(NanNew<String>("b2ParticleHandle"));
+	tplParticleHandle->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_METHOD_APPLY(tplParticleHandle, GetIndex)
+	NanAssignPersistent(g_constructor, tplParticleHandle->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleHandle"), NanNew<Function>(g_constructor));
+}
+
+Handle<Object> WrapParticleHandle::NewInstance()
+{
+	NanEscapableScope();
+	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
+	return NanEscapeScope(instance);
+}
+
+NAN_METHOD(WrapParticleHandle::New)
+{
+	NanScope();
+	WrapParticleHandle* that = new WrapParticleHandle();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_METHOD_IMPLEMENT(WrapParticleHandle, GetIndex, { NanReturnValue(NanNew<Number>(that->m_particle_handle.GetIndex())); })
+
+//// b2ParticleGroupDef
+
+class WrapParticleGroupDef : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+
+private:
+	b2ParticleGroupDef m_pgd;
+	Persistent<Object> m_pgd_position;			// m_pgd.position
+	Persistent<Object> m_pgd_linearVelocity;	// m_pgd.linearVelocity
+	Persistent<Object> m_pgd_color;				// m_pgd.color
+	Persistent<Object> m_pgd_shape;				// m_pgd.shape
+	Persistent<Value> m_pgd_userData;			// m_pgd.userData
+
+private:
+	WrapParticleGroupDef()
+	{
+		// create javascript objects
+		NanAssignPersistent(m_pgd_position, WrapVec2::NewInstance(m_pgd.position));
+		NanAssignPersistent(m_pgd_linearVelocity, WrapVec2::NewInstance(m_pgd.linearVelocity));
+		NanAssignPersistent(m_pgd_color, WrapParticleColor::NewInstance(m_pgd.color));
+	}
+	~WrapParticleGroupDef()
+	{
+		NanDisposePersistent(m_pgd_position);
+		NanDisposePersistent(m_pgd_linearVelocity);
+		NanDisposePersistent(m_pgd_color);
+		NanDisposePersistent(m_pgd_shape);
+		NanDisposePersistent(m_pgd_userData);
+	}
+
+public:
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+		m_pgd.position = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pgd_position))->GetVec2(); // struct copy
+		m_pgd.linearVelocity = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pgd_linearVelocity))->GetVec2(); // struct copy
+		m_pgd.color = node::ObjectWrap::Unwrap<WrapParticleColor>(NanNew<Object>(m_pgd_color))->GetParticleColor(); // struct copy
+		if (!m_pgd_shape.IsEmpty())
+		{
+			WrapShape* wrap_shape = node::ObjectWrap::Unwrap<WrapShape>(NanNew<Object>(m_pgd_shape));
+			m_pgd.shape = &wrap_shape->UseShape();
+		}
+		else
+		{
+			m_pgd.shape = NULL;
+		}
+		//m_pgd.userData; // not used
+	}
+
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pgd_position))->SetVec2(m_pgd.position);
+		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pgd_linearVelocity))->SetVec2(m_pgd.linearVelocity);
+		node::ObjectWrap::Unwrap<WrapParticleColor>(NanNew<Object>(m_pgd_color))->SetParticleColor(m_pgd.color);
+		if (m_pgd.shape)
+		{
+			// TODO: NanAssignPersistent(m_pgd_shape, NanObjectWrapHandle(WrapShape::GetWrap(m_pgd.shape)));
+		}
+		else
+		{
+			NanDisposePersistent(m_pgd_shape);
+		}
+		//m_pgd.userData; // not used
+	}
+
+	b2ParticleGroupDef& GetParticleGroupDef() { return m_pgd; }
+
+	const b2ParticleGroupDef& UseParticleGroupDef() { SyncPull(); return GetParticleGroupDef(); }
+
+	Handle<Value> GetUserDataHandle() { return NanNew<Value>(m_pgd_userData); }
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_MEMBER_DECLARE(flags)
+	CLASS_MEMBER_DECLARE(groupFlags)
+	CLASS_MEMBER_DECLARE(position)
+	CLASS_MEMBER_DECLARE(angle)
+	CLASS_MEMBER_DECLARE(linearVelocity)
+	CLASS_MEMBER_DECLARE(angularVelocity)
+	CLASS_MEMBER_DECLARE(color)
+	CLASS_MEMBER_DECLARE(strength)
+	CLASS_MEMBER_DECLARE(shape)
+	//const b2Shape* const* shapes;
+	//int32 shapeCount;
+	//float32 stride;
+	//int32 particleCount;
+	//const b2Vec2* positionData;
+	CLASS_MEMBER_DECLARE(lifetime)
+	CLASS_MEMBER_DECLARE(userData)
+	//b2ParticleGroup* group;
+};
+
+Persistent<Function> WrapParticleGroupDef::g_constructor;
+
+void WrapParticleGroupDef::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleGroupDef = NanNew<FunctionTemplate>(New);
+	tplParticleGroupDef->SetClassName(NanNew<String>("b2ParticleGroupDef"));
+	tplParticleGroupDef->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, flags)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, groupFlags)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, position)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, angle)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, linearVelocity)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, angularVelocity)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, color)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, strength)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, shape)
+	//const b2Shape* const* shapes;
+	//int32 shapeCount;
+	//float32 stride;
+	//int32 particleCount;
+	//const b2Vec2* positionData;
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, lifetime)
+	CLASS_MEMBER_APPLY(tplParticleGroupDef, userData)
+	//b2ParticleGroup* group;
+	NanAssignPersistent(g_constructor, tplParticleGroupDef->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleGroupDef"), NanNew<Function>(g_constructor));
+}
+
+NAN_METHOD(WrapParticleGroupDef::New)
+{
+	NanScope();
+	WrapParticleGroupDef* that = new WrapParticleGroupDef();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapParticleGroupDef, m_pgd, uint32, flags				)
+CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapParticleGroupDef, m_pgd, uint32, groupFlags		)
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleGroupDef, m_pgd, position					) // m_pgd_position
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleGroupDef, m_pgd, float32, angle			)
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleGroupDef, m_pgd, linearVelocity			) // m_pgd_linearVelocity
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleGroupDef, m_pgd, float32, angularVelocity	)
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleGroupDef, m_pgd, color						) // m_pgd_color
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleGroupDef, m_pgd, float32, strength			)
+CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapParticleGroupDef, m_pgd, shape						) // m_pgd_shape
+//const b2Shape* const* shapes;
+//int32 shapeCount;
+//float32 stride;
+//int32 particleCount;
+//const b2Vec2* positionData;
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleGroupDef, m_pgd, float32, lifetime			)
+CLASS_MEMBER_IMPLEMENT_VALUE	(WrapParticleGroupDef, m_pgd, userData					) // m_pgd_userData
+//b2ParticleGroup* group;
+
+//// b2ParticleGroup
+
+class WrapParticleGroup : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+	static Handle<Object> NewInstance();
+
+	static WrapParticleGroup* GetWrap(const b2ParticleGroup* particle_group)
+	{
+		return (WrapParticleGroup*) particle_group->GetUserData();
+	}
+
+	static void SetWrap(b2ParticleGroup* particle_group, WrapParticleGroup* wrap)
+	{
+		particle_group->SetUserData(wrap);
+	}
+
+private:
+	b2ParticleGroup* m_particle_group;
+	Persistent<Object> m_particle_group_particle_system;
+	Persistent<Value> m_particle_group_userData;
+
+private:
+	WrapParticleGroup() :
+		m_particle_group(NULL)
+	{
+		// create javascript objects
+	}
+	~WrapParticleGroup()
+	{
+		NanDisposePersistent(m_particle_group_particle_system);
+		NanDisposePersistent(m_particle_group_userData);
+	}
+
+public:
+	b2ParticleGroup* GetParticleGroup() { return m_particle_group; }
+
+	void SetupObject(Handle<Object> h_particle_system, WrapParticleGroupDef* wrap_pgd, b2ParticleGroup* particle_group)
+	{
+		m_particle_group = particle_group;
+
+		// set particle_group internal data
+		WrapParticleGroup::SetWrap(m_particle_group, this);
+		// set reference to this particle_group (prevent GC)
+		Ref();
+
+		// set reference to world object
+		NanAssignPersistent(m_particle_group_particle_system, h_particle_system);
+		// set reference to user data object
+		NanAssignPersistent(m_particle_group_userData, wrap_pgd->GetUserDataHandle());
+	}
+
+	b2ParticleGroup* ResetObject()
+	{
+		// clear reference to world object
+		NanDisposePersistent(m_particle_group_particle_system);
+		// clear reference to user data object
+		NanDisposePersistent(m_particle_group_userData);
+
+		// clear reference to this particle_group (allow GC)
+		Unref();
+		// clear particle_group internal data
+		WrapParticleGroup::SetWrap(m_particle_group, NULL);
+
+		b2ParticleGroup* particle_group = m_particle_group;
+		m_particle_group = NULL;
+		return particle_group;
+	}
+
+private:
+	static NAN_METHOD(New);
+
+	//b2ParticleGroup* GetNext();
+	//b2ParticleSystem* GetParticleSystem();
+	CLASS_METHOD_DECLARE(GetParticleCount)
+	CLASS_METHOD_DECLARE(GetBufferIndex)
+	CLASS_METHOD_DECLARE(ContainsParticle)
+	//uint32 GetAllParticleFlags() const;
+	//uint32 GetGroupFlags() const;
+	//void SetGroupFlags(uint32 flags);
+	//float32 GetMass() const;
+	//float32 GetInertia() const;
+	//b2Vec2 GetCenter() const;
+	//b2Vec2 GetLinearVelocity() const;
+	//float32 GetAngularVelocity() const;
+	//const b2Transform& GetTransform() const;
+	//const b2Vec2& GetPosition() const;
+	//float32 GetAngle() const;
+	//b2Vec2 GetLinearVelocityFromWorldPoint(const b2Vec2& worldPoint) const;
+	//void* GetUserData() const;
+	//void SetUserData(void* data);
+	//void ApplyForce(const b2Vec2& force);
+	//void ApplyLinearImpulse(const b2Vec2& impulse);
+	CLASS_METHOD_DECLARE(DestroyParticles)
+};
+
+Persistent<Function> WrapParticleGroup::g_constructor;
+
+void WrapParticleGroup::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleGroup = NanNew<FunctionTemplate>(New);
+	tplParticleGroup->SetClassName(NanNew<String>("b2ParticleGroup"));
+	tplParticleGroup->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_METHOD_APPLY(tplParticleGroup, GetParticleCount)
+	CLASS_METHOD_APPLY(tplParticleGroup, GetBufferIndex)
+	CLASS_METHOD_APPLY(tplParticleGroup, ContainsParticle)
+	CLASS_METHOD_APPLY(tplParticleGroup, DestroyParticles)
+	NanAssignPersistent(g_constructor, tplParticleGroup->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleGroup"), NanNew<Function>(g_constructor));
+}
+
+Handle<Object> WrapParticleGroup::NewInstance()
+{
+	NanEscapableScope();
+	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
+	return NanEscapeScope(instance);
+}
+
+NAN_METHOD(WrapParticleGroup::New)
+{
+	NanScope();
+	WrapParticleGroup* that = new WrapParticleGroup();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_METHOD_IMPLEMENT(WrapParticleGroup, GetParticleCount,
+{
+	NanScope();
+	NanReturnValue(NanNew<Integer>(that->m_particle_group->GetParticleCount()));
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleGroup, GetBufferIndex,
+{
+	NanScope();
+	NanReturnValue(NanNew<Integer>(that->m_particle_group->GetBufferIndex()));
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleGroup, ContainsParticle,
+{
+	NanScope();
+	int32 index = (int32) args[0]->Int32Value();
+	NanReturnValue(NanNew<Boolean>(that->m_particle_group->ContainsParticle(index)));
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleGroup, DestroyParticles,
+{
+	NanScope();
+	bool callDestructionListener = (args.Length() > 0) ? args[0]->BooleanValue() : false;
+	that->m_particle_group->DestroyParticles(callDestructionListener);
+	NanReturnUndefined();
+})
+
+//// b2ParticleSystemDef
+
+class WrapParticleSystemDef : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+
+private:
+	b2ParticleSystemDef m_psd;
+
+private:
+	WrapParticleSystemDef()
+	{
+	}
+	~WrapParticleSystemDef()
+	{
+	}
+
+public:
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+	}
+
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+	}
+
+	b2ParticleSystemDef& GetParticleSystemDef() { return m_psd; }
+
+	const b2ParticleSystemDef& UseParticleSystemDef() { SyncPull(); return GetParticleSystemDef(); }
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_MEMBER_DECLARE(strictContactCheck)
+	CLASS_MEMBER_DECLARE(density)
+	CLASS_MEMBER_DECLARE(gravityScale)
+	CLASS_MEMBER_DECLARE(radius)
+	CLASS_MEMBER_DECLARE(maxCount)
+	CLASS_MEMBER_DECLARE(pressureStrength)
+	CLASS_MEMBER_DECLARE(dampingStrength)
+	CLASS_MEMBER_DECLARE(elasticStrength)
+	CLASS_MEMBER_DECLARE(springStrength)
+	CLASS_MEMBER_DECLARE(viscousStrength)
+	CLASS_MEMBER_DECLARE(surfaceTensionPressureStrength)
+	CLASS_MEMBER_DECLARE(surfaceTensionNormalStrength)
+	CLASS_MEMBER_DECLARE(repulsiveStrength)
+	CLASS_MEMBER_DECLARE(powderStrength)
+	CLASS_MEMBER_DECLARE(ejectionStrength)
+	CLASS_MEMBER_DECLARE(staticPressureStrength)
+	CLASS_MEMBER_DECLARE(staticPressureRelaxation)
+	CLASS_MEMBER_DECLARE(staticPressureIterations)
+	CLASS_MEMBER_DECLARE(colorMixingStrength)
+	CLASS_MEMBER_DECLARE(destroyByAge)
+	CLASS_MEMBER_DECLARE(lifetimeGranularity)
+};
+
+Persistent<Function> WrapParticleSystemDef::g_constructor;
+
+void WrapParticleSystemDef::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleSystemDef = NanNew<FunctionTemplate>(New);
+	tplParticleSystemDef->SetClassName(NanNew<String>("b2ParticleSystemDef"));
+	tplParticleSystemDef->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, strictContactCheck)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, strictContactCheck)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, density)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, gravityScale)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, radius)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, maxCount)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, pressureStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, dampingStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, elasticStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, springStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, viscousStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, surfaceTensionPressureStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, surfaceTensionNormalStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, repulsiveStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, powderStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, ejectionStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, staticPressureStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, staticPressureRelaxation)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, staticPressureIterations)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, colorMixingStrength)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, destroyByAge)
+	CLASS_MEMBER_APPLY(tplParticleSystemDef, lifetimeGranularity)
+	NanAssignPersistent(g_constructor, tplParticleSystemDef->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleSystemDef"), NanNew<Function>(g_constructor));
+}
+
+NAN_METHOD(WrapParticleSystemDef::New)
+{
+	NanScope();
+	WrapParticleSystemDef* that = new WrapParticleSystemDef();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapParticleSystemDef, m_psd, bool, strictContactCheck)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, density)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, gravityScale)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, radius)
+CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapParticleSystemDef, m_psd, int32, maxCount)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, pressureStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, dampingStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, elasticStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, springStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, viscousStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, surfaceTensionPressureStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, surfaceTensionNormalStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, repulsiveStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, powderStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, ejectionStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, staticPressureStrength)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, staticPressureRelaxation)
+CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapParticleSystemDef, m_psd, int32, staticPressureIterations)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, colorMixingStrength)
+CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapParticleSystemDef, m_psd, bool, destroyByAge)
+CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapParticleSystemDef, m_psd, float32, lifetimeGranularity)
+
+//// b2ParticleSystem
+
+class WrapParticleSystem : public node::ObjectWrap
+{
+private:
+	static Persistent<Function> g_constructor;
+
+public:
+	static void Init(Handle<Object> exports);
+	static Handle<Object> NewInstance();
+
+	static WrapParticleSystem* GetWrap(const b2ParticleSystem* particle_system)
+	{
+		//return (WrapParticleSystem*) particle_system->GetUserData();
+		return NULL;
+	}
+
+	static void SetWrap(b2ParticleSystem* particle_system, WrapParticleSystem* wrap)
+	{
+		//particle_system->SetUserData(wrap);
+	}
+
+private:
+	b2ParticleSystem* m_particle_system;
+	Persistent<Object> m_particle_system_world;
+
+private:
+	WrapParticleSystem() :
+		m_particle_system(NULL)
+	{
+		// create javascript objects
+	}
+	~WrapParticleSystem()
+	{
+		NanDisposePersistent(m_particle_system_world);
+	}
+
+public:
+	b2ParticleSystem* GetParticleSystem() { return m_particle_system; }
+
+	void SetupObject(Handle<Object> h_world, WrapParticleSystemDef* wrap_psd, b2ParticleSystem* particle_system)
+	{
+		m_particle_system = particle_system;
+
+		// set reference to this particle_system (prevent GC)
+		Ref();
+
+		// set reference to world object
+		NanAssignPersistent(m_particle_system_world, h_world);
+	}
+
+	b2ParticleSystem* ResetObject()
+	{
+		// clear reference to world object
+		NanDisposePersistent(m_particle_system_world);
+
+		// clear reference to this particle_system (allow GC)
+		Unref();
+
+		b2ParticleSystem* particle_system = m_particle_system;
+		m_particle_system = NULL;
+		return particle_system;
+	}
+
+private:
+	static NAN_METHOD(New);
+
+	CLASS_METHOD_DECLARE(CreateParticle)
+//	const b2ParticleHandle* GetParticleHandleFromIndex(const int32 index);
+	CLASS_METHOD_DECLARE(DestroyParticle)
+	CLASS_METHOD_DECLARE(DestroyOldestParticle)
+//	int32 DestroyParticlesInShape(const b2Shape& shape, const b2Transform& xf);
+//	int32 DestroyParticlesInShape(const b2Shape& shape, const b2Transform& xf, bool callDestructionListener);
+	CLASS_METHOD_DECLARE(CreateParticleGroup)
+//	void JoinParticleGroups(b2ParticleGroup* groupA, b2ParticleGroup* groupB);
+//	void SplitParticleGroup(b2ParticleGroup* group);
+//	b2ParticleGroup* GetParticleGroupList();
+//	int32 GetParticleGroupCount() const;
+//	int32 GetParticleCount() const;
+	CLASS_METHOD_DECLARE(GetParticleCount)
+//	int32 GetMaxParticleCount() const;
+//	void SetMaxParticleCount(int32 count);
+//	uint32 GetAllParticleFlags() const;
+//	uint32 GetAllGroupFlags() const;
+//	void SetPaused(bool paused);
+//	bool GetPaused() const;
+//	void SetDensity(float32 density);
+//	float32 GetDensity() const;
+//	void SetGravityScale(float32 gravityScale);
+//	float32 GetGravityScale() const;
+//	void SetDamping(float32 damping);
+//	float32 GetDamping() const;
+//	void SetStaticPressureIterations(int32 iterations);
+//	int32 GetStaticPressureIterations() const;
+//	void SetRadius(float32 radius);
+//	float32 GetRadius() const;
+	CLASS_METHOD_DECLARE(GetRadius)
+//	b2Vec2* GetPositionBuffer();
+//	b2Vec2* GetVelocityBuffer();
+//	b2ParticleColor* GetColorBuffer();
+//	b2ParticleGroup* const* GetGroupBuffer();
+//	float32* GetWeightBuffer();
+//	void** GetUserDataBuffer();
+//	const uint32* GetFlagsBuffer() const;
+//	void SetParticleFlags(int32 index, uint32 flags);
+//	uint32 GetParticleFlags(const int32 index);
+//	void SetFlagsBuffer(uint32* buffer, int32 capacity);
+//	void SetPositionBuffer(b2Vec2* buffer, int32 capacity);
+	CLASS_METHOD_DECLARE(SetPositionBuffer)
+//	void SetVelocityBuffer(b2Vec2* buffer, int32 capacity);
+	CLASS_METHOD_DECLARE(SetVelocityBuffer)
+//	void SetColorBuffer(b2ParticleColor* buffer, int32 capacity);
+	CLASS_METHOD_DECLARE(SetColorBuffer)
+//	void SetUserDataBuffer(void** buffer, int32 capacity);
+//	const b2ParticleContact* GetContacts() const;
+//	int32 GetContactCount() const;
+//	const b2ParticleBodyContact* GetBodyContacts() const;
+//	int32 GetBodyContactCount() const;
+//	const b2ParticlePair* GetPairs() const;
+//	int32 GetPairCount() const;
+//	const b2ParticleTriad* GetTriads() const;
+//	int32 GetTriadCount() const;
+//	void SetStuckThreshold(int32 iterations);
+//	const int32* GetStuckCandidates() const;
+//	int32 GetStuckCandidateCount() const;
+//	float32 ComputeCollisionEnergy() const;
+//	void SetStrictContactCheck(bool enabled);
+//	bool GetStrictContactCheck() const;
+//	void SetParticleLifetime(const int32 index, const float32 lifetime);
+//	float32 GetParticleLifetime(const int32 index);
+//	void SetDestructionByAge(const bool enable);
+//	bool GetDestructionByAge() const;
+//	const int32* GetExpirationTimeBuffer();
+//	float32 ExpirationTimeToLifetime(const int32 expirationTime) const;
+//	const int32* GetIndexByExpirationTimeBuffer();
+//	void ParticleApplyLinearImpulse(int32 index, const b2Vec2& impulse);
+//	void ApplyLinearImpulse(int32 firstIndex, int32 lastIndex, const b2Vec2& impulse);
+//	void ParticleApplyForce(int32 index, const b2Vec2& force);
+//	void ApplyForce(int32 firstIndex, int32 lastIndex, const b2Vec2& force);
+//	b2ParticleSystem* GetNext();
+//	void QueryAABB(b2QueryCallback* callback, const b2AABB& aabb) const;
+//	void QueryShapeAABB(b2QueryCallback* callback, const b2Shape& shape, const b2Transform& xf) const;
+//	void RayCast(b2RayCastCallback* callback, const b2Vec2& point1, const b2Vec2& point2) const;
+//	void ComputeAABB(b2AABB* const aabb) const;
+};
+
+Persistent<Function> WrapParticleSystem::g_constructor;
+
+void WrapParticleSystem::Init(Handle<Object> exports)
+{
+	Local<FunctionTemplate> tplParticleSystem = NanNew<FunctionTemplate>(New);
+	tplParticleSystem->SetClassName(NanNew<String>("b2ParticleSystem"));
+	tplParticleSystem->InstanceTemplate()->SetInternalFieldCount(1);
+	CLASS_METHOD_APPLY(tplParticleSystem, CreateParticle)
+	CLASS_METHOD_APPLY(tplParticleSystem, DestroyParticle)
+	CLASS_METHOD_APPLY(tplParticleSystem, DestroyOldestParticle)
+	CLASS_METHOD_APPLY(tplParticleSystem, CreateParticleGroup)
+	CLASS_METHOD_APPLY(tplParticleSystem, GetParticleCount)
+	CLASS_METHOD_APPLY(tplParticleSystem, GetRadius)
+	CLASS_METHOD_APPLY(tplParticleSystem, SetPositionBuffer)
+	CLASS_METHOD_APPLY(tplParticleSystem, SetVelocityBuffer)
+	CLASS_METHOD_APPLY(tplParticleSystem, SetColorBuffer)
+	NanAssignPersistent(g_constructor, tplParticleSystem->GetFunction());
+	exports->Set(NanNew<String>("b2ParticleSystem"), NanNew<Function>(g_constructor));
+}
+
+Handle<Object> WrapParticleSystem::NewInstance()
+{
+	NanEscapableScope();
+	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
+	return NanEscapeScope(instance);
+}
+
+NAN_METHOD(WrapParticleSystem::New)
+{
+	NanScope();
+	WrapParticleSystem* that = new WrapParticleSystem();
+	that->Wrap(args.This());
+	NanReturnValue(args.This());
+}
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, CreateParticle,
+{
+	WrapParticleDef* wrap_pd = node::ObjectWrap::Unwrap<WrapParticleDef>(Local<Object>::Cast(args[0]));
+
+	// create box2d particle
+	int32 particle_index = that->m_particle_system->CreateParticle(wrap_pd->UseParticleDef());
+
+	NanReturnValue(NanNew<Integer>(particle_index));
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, DestroyParticle,
+{
+	int32 particle_index = (int32) args[0]->Int32Value();
+	bool callDestructionListener = (args.Length() > 1) ? args[1]->BooleanValue() : false;
+
+	// destroy box2d particle
+	that->m_particle_system->DestroyParticle(particle_index, callDestructionListener);
+
+	NanReturnUndefined();
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, DestroyOldestParticle,
+{
+	int32 particle_index = (int32) args[0]->Int32Value();
+	bool callDestructionListener = (args.Length() > 1) ? args[1]->BooleanValue() : false;
+
+	// destroy box2d particle
+	that->m_particle_system->DestroyOldestParticle(particle_index, callDestructionListener);
+
+	NanReturnUndefined();
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, CreateParticleGroup,
+{
+	WrapParticleGroupDef* wrap_pgd = node::ObjectWrap::Unwrap<WrapParticleGroupDef>(Local<Object>::Cast(args[0]));
+
+	// create box2d particle group
+	b2ParticleGroup* particle_group = that->m_particle_system->CreateParticleGroup(wrap_pgd->UseParticleGroupDef());
+
+	// create javascript particle group object
+	Local<Object> h_particle_group = NanNew<Object>(WrapParticleGroup::NewInstance());
+	WrapParticleGroup* wrap_particle_group = node::ObjectWrap::Unwrap<WrapParticleGroup>(h_particle_group);
+
+	// set up javascript particle group object
+	wrap_particle_group->SetupObject(args.This(), wrap_pgd, particle_group);
+
+	NanReturnValue(h_particle_group);
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, GetParticleCount, { NanReturnValue(NanNew<Integer>(that->m_particle_system->GetParticleCount())); })
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, GetRadius, { NanReturnValue(NanNew<Number>(that->m_particle_system->GetRadius())); })
+	
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, SetPositionBuffer, 
+{
+	Handle<Object> _buffer = Handle<Object>::Cast(args[0]);
+	int32 capacity = (int32) args[1]->Int32Value();
+	b2Vec2* buffer = (b2Vec2*) _buffer->GetIndexedPropertiesExternalArrayData();
+	that->m_particle_system->SetPositionBuffer(buffer, capacity);
+	NanReturnUndefined();
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, SetVelocityBuffer, 
+{
+	Handle<Object> _buffer = Handle<Object>::Cast(args[0]);
+	int32 capacity = (int32) args[1]->Int32Value();
+	b2Vec2* buffer = (b2Vec2*) _buffer->GetIndexedPropertiesExternalArrayData();
+	that->m_particle_system->SetVelocityBuffer(buffer, capacity);
+	NanReturnUndefined();
+})
+
+CLASS_METHOD_IMPLEMENT(WrapParticleSystem, SetColorBuffer, 
+{
+	Handle<Object> _buffer = Handle<Object>::Cast(args[0]);
+	int32 capacity = (int32) args[1]->Int32Value();
+	b2ParticleColor* buffer = (b2ParticleColor*) _buffer->GetIndexedPropertiesExternalArrayData();
+	that->m_particle_system->SetColorBuffer(buffer, capacity);
+	NanReturnUndefined();
+})
+
+#endif
+
 //// b2World
 
 class WrapWorld : public node::ObjectWrap
@@ -6352,6 +7291,10 @@ private:
 	public:
 		virtual void SayGoodbye(b2Joint* joint);
 		virtual void SayGoodbye(b2Fixture* fixture);
+		#if 1 // B2_ENABLE_PARTICLE
+		virtual void SayGoodbye(b2ParticleGroup* group);
+		virtual void SayGoodbye(b2ParticleSystem* particleSystem, int32 index);
+		#endif
 	};
 
 private:
@@ -6364,6 +7307,10 @@ private:
 		~WrapContactFilter() { m_that = NULL; }
 	public:
 		virtual bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB);
+		#if 1 // B2_ENABLE_PARTICLE
+		virtual bool ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex);
+		virtual bool ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB);
+		#endif
 	};
 
 private:
@@ -6377,6 +7324,12 @@ private:
 	public:
 		virtual void BeginContact(b2Contact* contact);
 		virtual void EndContact(b2Contact* contact);
+		#if 1 // B2_ENABLE_PARTICLE
+		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact);
+		virtual void EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index);
+		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact);
+		virtual void EndContact(b2ParticleSystem* particleSystem, int32 indexA, int32 indexB);
+		#endif
 		virtual void PreSolve(b2Contact* contact, const b2Manifold* oldManifold);
 		virtual void PostSolve(b2Contact* contact, const b2ContactImpulse* impulse);
 	};
@@ -6394,6 +7347,9 @@ private:
 		virtual void DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
 		virtual void DrawCircle(const b2Vec2& center, float32 radius, const b2Color& color);
 		virtual void DrawSolidCircle(const b2Vec2& center, float32 radius, const b2Vec2& axis, const b2Color& color);
+		#if 1 // B2_ENABLE_PARTICLE
+		virtual void DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count);
+		#endif
 		virtual void DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color);
 		virtual void DrawTransform(const b2Transform& xf);
 	};
@@ -6464,6 +7420,9 @@ private:
 	CLASS_METHOD_DECLARE(ClearForces)
 	CLASS_METHOD_DECLARE(DrawDebugData)
 	CLASS_METHOD_DECLARE(QueryAABB)
+	#if 1 // B2_ENABLE_PARTICLE
+	CLASS_METHOD_DECLARE(QueryShapeAABB)
+	#endif
 	CLASS_METHOD_DECLARE(RayCast)
 	CLASS_METHOD_DECLARE(GetBodyList)
 	CLASS_METHOD_DECLARE(GetJointList)
@@ -6492,6 +7451,12 @@ private:
 ///	const b2ContactManager& GetContactManager() const;
 ///	const b2Profile& GetProfile() const;
 ///	void Dump();
+
+	#if 1 // B2_ENABLE_PARTICLE
+	CLASS_METHOD_DECLARE(CreateParticleSystem)
+	CLASS_METHOD_DECLARE(DestroyParticleSystem)
+	CLASS_METHOD_DECLARE(CalculateReasonableParticleIterations)
+	#endif
 };
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2Joint* joint)
@@ -6524,6 +7489,40 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2Fixture* fixture)
 	}
 }
 
+#if 1 // B2_ENABLE_PARTICLE
+
+void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleGroup* group)
+{
+	NanScope();
+	if (!m_that->m_destruction_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_destruction_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("SayGoodbyeParticleGroup")));
+		// get particle group internal data
+		WrapParticleGroup* wrap_group = WrapParticleGroup::GetWrap(group);
+		Local<Object> h_group = NanObjectWrapHandle(wrap_group);
+		Handle<Value> argv[] = { h_group };
+		NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleSystem* particleSystem, int32 index)
+{
+	NanScope();
+	if (!m_that->m_destruction_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_destruction_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("SayGoodbyeParticle")));
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = (WrapParticleSystem*) particleSystem->GetUserData();
+		///	Local<Object> h_system = NanObjectWrapHandle(wrap_system);
+		///	Handle<Value> argv[] = { h_system, NanNew<Integer>(index) };
+		///	NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+#endif
+
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB)
 {
 	NanScope();
@@ -6541,6 +7540,45 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture*
 	}
 	return b2ContactFilter::ShouldCollide(fixtureA, fixtureB);
 }
+
+#if 1 // B2_ENABLE_PARTICLE
+
+bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex)
+{
+	NanScope();
+	if (!m_that->m_contact_filter.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_filter);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("ShouldCollideFixtureParticle")));
+		// get fixture internal data
+		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+		Local<Object> h_fixture = NanObjectWrapHandle(wrap_fixture);
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = (WrapParticleSystem*) particleSystem->GetUserData();
+		///	Local<Object> h_system = NanObjectWrapHandle(wrap_system);
+		///	Handle<Value> argv[] = { h_fixture, h_system, NanNew<Integer>(particleIndex) };
+		///	return NanMakeCallback(h_that, h_method, countof(argv), argv)->BooleanValue();
+	}
+	return b2ContactFilter::ShouldCollide(fixture, particleSystem, particleIndex);
+}
+
+bool WrapWorld::WrapContactFilter::ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB)
+{
+	NanScope();
+	if (!m_that->m_contact_filter.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_filter);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("ShouldCollideParticleParticle")));
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = (WrapParticleSystem*) particleSystem->GetUserData();
+		///	Local<Object> h_system = NanObjectWrapHandle(wrap_system);
+		///	Handle<Value> argv[] = { h_system, NanNew<Integer>(particleIndexA), NanNew<Integer>(particleIndexB) };
+		///	return NanMakeCallback(h_that, h_method, countof(argv), argv)->BooleanValue();
+	}
+	return b2ContactFilter::ShouldCollide(particleSystem, particleIndexA, particleIndexB);
+}
+
+#endif
 
 void WrapWorld::WrapContactListener::BeginContact(b2Contact* contact)
 {
@@ -6567,6 +7605,62 @@ void WrapWorld::WrapContactListener::EndContact(b2Contact* contact)
 		NanMakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
+
+#if 1 // B2_ENABLE_PARTICLE
+
+void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact)
+{
+	NanScope();
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("BeginContactFixtureParticle")));
+		// TODO: get particle system internal data, wrap b2ParticleBodyContact
+		///	Handle<Value> argv[] = {};
+		///	NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index)
+{
+	NanScope();
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("EndContactFixtureParticle")));
+		// TODO: get particle system internal data
+		///	Handle<Value> argv[] = {};
+		///	NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact)
+{
+	NanScope();
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("BeginContactParticleParticle")));
+		// TODO: get particle system internal data, wrap b2ParticleContact
+		///	Handle<Value> argv[] = {};
+		///	NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::EndContact(b2ParticleSystem* particleSystem, int32 indexA, int32 indexB)
+{
+	NanScope();
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("EndContactParticleParticle")));
+		// TODO: get particle system internal data
+		///	Handle<Value> argv[] = {};
+		///	NanMakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+#endif
 
 void WrapWorld::WrapContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldManifold)
 {
@@ -6671,6 +7765,43 @@ void WrapWorld::WrapDraw::DrawSolidCircle(const b2Vec2& center, float32 radius, 
 	}
 }
 
+#if 1 // B2_ENABLE_PARTICLE
+void WrapWorld::WrapDraw::DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count)
+{
+	NanScope();
+	if (!m_that->m_draw.IsEmpty())
+	{
+		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
+		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawParticles")));
+		Local<Array> h_centers = NanNew<Array>(count);
+		for (int i = 0; i < count; ++i)
+		{
+			h_centers->Set(i, NanNew<Object>(WrapVec2::NewInstance(centers[i])));
+		}
+		#if defined(_WIN32)
+		if (radius <= 0) { radius = 0.05f; } // hack: bug in Windows release build
+		#endif
+		Local<Number> h_radius = NanNew<Number>(radius);
+		Local<Integer> h_count = NanNew<Integer>(count);
+		if (colors != NULL)
+		{
+			Local<Array> h_colors = NanNew<Array>(count);
+			for (int i = 0; i < count; ++i)
+			{
+				h_colors->Set(i, NanNew<Object>(WrapParticleColor::NewInstance(colors[i])));
+			}
+			Handle<Value> argv[] = { h_centers, h_radius, h_colors, h_count };
+			NanMakeCallback(h_that, h_method, countof(argv), argv);
+		}
+		else
+		{
+			Handle<Value> argv[] = { h_centers, h_radius, NanNull(), h_count };
+			NanMakeCallback(h_that, h_method, countof(argv), argv);
+		}
+	}
+}
+#endif
+
 void WrapWorld::WrapDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color)
 {
 	NanScope();
@@ -6716,6 +7847,9 @@ void WrapWorld::Init(Handle<Object> exports)
 	CLASS_METHOD_APPLY(tplWorld, ClearForces)
 	CLASS_METHOD_APPLY(tplWorld, DrawDebugData)
 	CLASS_METHOD_APPLY(tplWorld, QueryAABB)
+	#if 1 // B2_ENABLE_PARTICLE
+	CLASS_METHOD_APPLY(tplWorld, QueryShapeAABB)
+	#endif
 	CLASS_METHOD_APPLY(tplWorld, RayCast)
 	CLASS_METHOD_APPLY(tplWorld, GetBodyList)
 	CLASS_METHOD_APPLY(tplWorld, GetJointList)
@@ -6736,6 +7870,11 @@ void WrapWorld::Init(Handle<Object> exports)
 	CLASS_METHOD_APPLY(tplWorld, IsLocked)
 	CLASS_METHOD_APPLY(tplWorld, SetAutoClearForces)
 	CLASS_METHOD_APPLY(tplWorld, GetAutoClearForces)
+	#if 1 // B2_ENABLE_PARTICLE
+	CLASS_METHOD_APPLY(tplWorld, CreateParticleSystem)
+	CLASS_METHOD_APPLY(tplWorld, DestroyParticleSystem)
+	CLASS_METHOD_APPLY(tplWorld, CalculateReasonableParticleIterations)
+	#endif
 	exports->Set(NanNew<String>("b2World"), tplWorld->GetFunction());
 }
 
@@ -7189,6 +8328,17 @@ CLASS_METHOD_IMPLEMENT(WrapWorld, DestroyJoint,
 	NanReturnUndefined();
 })
 
+#if 1 // B2_ENABLE_PARTICLE
+CLASS_METHOD_IMPLEMENT(WrapWorld, Step,
+{
+	float32 timeStep = (float32) args[0]->NumberValue();
+	int32 velocityIterations = (int32) args[1]->Int32Value();
+	int32 positionIterations = (int32) args[2]->Int32Value();
+	int32 particleIterations = (args.Length() > 3)?((int32) args[3]->Int32Value()):(that->m_world.CalculateReasonableParticleIterations(timeStep));
+	that->m_world.Step(timeStep, velocityIterations, positionIterations, particleIterations);
+	NanReturnUndefined();
+})
+#else
 CLASS_METHOD_IMPLEMENT(WrapWorld, Step,
 {
 	float32 timeStep = (float32) args[0]->NumberValue();
@@ -7197,6 +8347,7 @@ CLASS_METHOD_IMPLEMENT(WrapWorld, Step,
 	that->m_world.Step(timeStep, velocityIterations, positionIterations);
 	NanReturnUndefined();
 })
+#endif
 
 CLASS_METHOD_IMPLEMENT(WrapWorld, ClearForces,
 {
@@ -7241,6 +8392,22 @@ public:
 		Handle<Value> argv[] = { h_fixture };
 		return NanMakeCallback(NanGetCurrentContext()->Global(), NanNew<Function>(m_callback), countof(argv), argv)->BooleanValue();
 	}
+
+	#if 1 // B2_ENABLE_PARTICLE
+
+	bool ReportParticle(const b2ParticleSystem* particleSystem, int32 index)
+	{
+		// TODO
+		return b2QueryCallback::ReportParticle(particleSystem, index);
+	}
+
+	bool ShouldQueryParticleSystem(const b2ParticleSystem* particleSystem)
+	{
+		// TODO
+		return b2QueryCallback::ShouldQueryParticleSystem(particleSystem);
+	}
+
+	#endif
 };
 
 CLASS_METHOD_IMPLEMENT(WrapWorld, QueryAABB,
@@ -7251,6 +8418,18 @@ CLASS_METHOD_IMPLEMENT(WrapWorld, QueryAABB,
 	that->m_world.QueryAABB(&wrap_callback, wrap_aabb->GetAABB());
 	NanReturnUndefined();
 })
+
+#if 1 // B2_ENABLE_PARTICLE
+CLASS_METHOD_IMPLEMENT(WrapWorld, QueryShapeAABB,
+{
+	Local<Function> callback = Local<Function>::Cast(args[0]);
+	WrapShape* wrap_shape = node::ObjectWrap::Unwrap<WrapShape>(Local<Object>::Cast(args[1]));
+    WrapTransform* wrap_transform = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[2]));
+	WrapQueryCallback wrap_callback(callback);
+	that->m_world.QueryShapeAABB(&wrap_callback, wrap_shape->GetShape(), wrap_transform->GetTransform());
+	NanReturnUndefined();
+})
+#endif
 
 class WrapRayCastCallback : public b2RayCastCallback
 {
@@ -7272,6 +8451,22 @@ public:
 		Handle<Value> argv[] = { h_fixture, h_point, h_normal, h_fraction };
 		return (float32) NanMakeCallback(NanGetCurrentContext()->Global(), NanNew<Function>(m_callback), countof(argv), argv)->NumberValue();
 	}
+
+	#if 1 // B2_ENABLE_PARTICLE
+
+	float32 ReportParticle(const b2ParticleSystem* particleSystem, int32 index, const b2Vec2& point, const b2Vec2& normal, float32 fraction)
+	{
+		// TODO:
+		return b2RayCastCallback::ReportParticle(particleSystem, index, point, normal, fraction);
+	}
+
+	bool ShouldQueryParticleSystem(const b2ParticleSystem* particleSystem)
+	{
+		// TODO:
+		return b2RayCastCallback::ShouldQueryParticleSystem(particleSystem);
+	}
+
+	#endif
 };
 
 CLASS_METHOD_IMPLEMENT(WrapWorld, RayCast,
@@ -7405,6 +8600,47 @@ CLASS_METHOD_IMPLEMENT(WrapWorld, GetAutoClearForces,
 	NanReturnValue(NanNew<Boolean>(that->m_world.GetAutoClearForces()));
 })
 
+#if 1 // B2_ENABLE_PARTICLE
+
+CLASS_METHOD_IMPLEMENT(WrapWorld, CreateParticleSystem,
+{
+	WrapParticleSystemDef* wrap_psd = node::ObjectWrap::Unwrap<WrapParticleSystemDef>(Local<Object>::Cast(args[0]));
+
+	// create box2d particle system
+	b2ParticleSystem* system = that->m_world.CreateParticleSystem(&wrap_psd->UseParticleSystemDef());
+
+	// create javascript particle system object
+	Local<Object> h_particle_system = NanNew<Object>(WrapParticleSystem::NewInstance());
+	WrapParticleSystem* wrap_particle_system = node::ObjectWrap::Unwrap<WrapParticleSystem>(h_particle_system);
+
+	// set up javascript particle system object
+	wrap_particle_system->SetupObject(args.This(), wrap_psd, system);
+
+	NanReturnValue(h_particle_system);
+})
+
+CLASS_METHOD_IMPLEMENT(WrapWorld, DestroyParticleSystem,
+{
+	Local<Object> h_particle_system = Local<Object>::Cast(args[0]);
+	WrapParticleSystem* wrap_particle_system = node::ObjectWrap::Unwrap<WrapParticleSystem>(h_particle_system);
+
+	// delete box2d particle system
+	that->m_world.DestroyParticleSystem(wrap_particle_system->GetParticleSystem());
+
+	// reset javascript system object
+	wrap_particle_system->ResetObject();
+
+	NanReturnUndefined();
+})
+
+CLASS_METHOD_IMPLEMENT(WrapWorld, CalculateReasonableParticleIterations,
+{
+	float32 timeStep = (float32) args[0]->NumberValue();
+	NanReturnValue(NanNew<Integer>(that->m_world.CalculateReasonableParticleIterations(timeStep)));
+})
+
+#endif
+
 ////
 
 MODULE_EXPORT_IMPLEMENT(b2Distance)
@@ -7526,6 +8762,19 @@ MODULE_EXPORT_IMPLEMENT(b2TestOverlap_Shape)
 	NanReturnValue(NanNew<Boolean>(overlap));
 }
 
+#if 1 // B2_ENABLE_PARTICLE
+
+MODULE_EXPORT_IMPLEMENT(b2CalculateParticleIterations)
+{
+	NanScope();
+	float32 gravity = (float32) args[0]->NumberValue();
+	float32 radius = (float32) args[1]->NumberValue();
+	float32 timeStep = (float32) args[2]->NumberValue();
+	NanReturnValue(NanNew<Integer>(b2CalculateParticleIterations(gravity, radius, timeStep)));
+}
+
+#endif
+
 ////
 
 #if NODE_VERSION_AT_LEAST(0,11,0)
@@ -7624,6 +8873,42 @@ void init(Handle<Object> exports/*, Handle<Value> module*/)
 	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit,			b2Draw::e_aabbBit);
 	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_pairBit,			b2Draw::e_pairBit);
 	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit,	b2Draw::e_centerOfMassBit);
+	#if 1 // B2_ENABLE_PARTICLE
+	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_particleBit,		b2Draw::e_particleBit);
+	#endif
+
+	#if 1 // B2_ENABLE_PARTICLE
+
+	Local<Object> WrapParticleFlag = NanNew<Object>();
+	exports->Set(NanNew<String>("b2ParticleFlag"), WrapParticleFlag);
+	MODULE_CONSTANT(WrapParticleFlag, b2_waterParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_zombieParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_wallParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_springParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_elasticParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_viscousParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_powderParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_tensileParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_colorMixingParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_destructionListenerParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_barrierParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_staticPressureParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_reactiveParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_repulsiveParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_fixtureContactListenerParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_particleContactListenerParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_fixtureContactFilterParticle);
+	MODULE_CONSTANT(WrapParticleFlag, b2_particleContactFilterParticle);
+
+	Local<Object> WrapParticleGroupFlag = NanNew<Object>();
+	exports->Set(NanNew<String>("b2ParticleGroupFlag"), WrapParticleGroupFlag);
+	MODULE_CONSTANT(WrapParticleGroupFlag, b2_solidParticleGroup);
+	MODULE_CONSTANT(WrapParticleGroupFlag, b2_rigidParticleGroup);
+	MODULE_CONSTANT(WrapParticleGroupFlag, b2_particleGroupCanBeEmpty);
+	MODULE_CONSTANT(WrapParticleGroupFlag, b2_particleGroupWillBeDestroyed);
+	MODULE_CONSTANT(WrapParticleGroupFlag, b2_particleGroupNeedsUpdateDepth);
+
+	#endif
 
 	WrapVec2::Init(exports);
 	WrapRot::Init(exports);
@@ -7674,6 +8959,15 @@ void init(Handle<Object> exports/*, Handle<Value> module*/)
 	#if 0
 	WrapDraw::Init(exports);
 	#endif
+	#if 1 // B2_ENABLE_PARTICLE
+	WrapParticleColor::Init(exports);
+	WrapParticleDef::Init(exports);
+	WrapParticleHandle::Init(exports);
+	WrapParticleGroupDef::Init(exports);
+	WrapParticleGroup::Init(exports);
+	WrapParticleSystemDef::Init(exports);
+	WrapParticleSystem::Init(exports);
+	#endif
 	WrapWorld::Init(exports);
 
 	MODULE_EXPORT_APPLY(exports, b2Distance);
@@ -7690,6 +8984,10 @@ void init(Handle<Object> exports/*, Handle<Value> module*/)
 
 	MODULE_EXPORT_APPLY(exports, b2TestOverlap_AABB);
 	MODULE_EXPORT_APPLY(exports, b2TestOverlap_Shape);
+
+	#if 1 // B2_ENABLE_PARTICLE
+	MODULE_EXPORT_APPLY(exports, b2CalculateParticleIterations);
+	#endif
 }
 
 ////
