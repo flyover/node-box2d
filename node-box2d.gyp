@@ -1,7 +1,7 @@
 {
     'variables': {
         'OS%': 'ios',
-        'NODE_PATH': '../../node',
+        'NODE_PATH': '../../../node',
     },
     'xcode_settings': {
         'ALWAYS_SEARCH_USER_PATHS': 'NO',

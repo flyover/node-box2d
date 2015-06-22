@@ -387,12 +387,12 @@
 				GCC_WARN_NON_VIRTUAL_DESTRUCTOR = YES;
 				HEADER_SEARCH_PATHS = (
 					.,
-					../nan,
-					../../node/src,
-					../../node/deps/uv/include,
-					../../node/deps/v8/include,
-					"../../node/deps/debugger-agent/include",
-					../../node/deps/cares/include,
+					../../nan,
+					../../../node/src,
+					../../../node/deps/uv/include,
+					../../../node/deps/v8/include,
+					"../../../node/deps/debugger-agent/include",
+					../../../node/deps/cares/include,
 					box2d/Box2D,
 				);
 				"OTHER_CFLAGS[arch=arm64]" = "-marm";
@@ -458,12 +458,12 @@
 				GCC_WARN_NON_VIRTUAL_DESTRUCTOR = YES;
 				HEADER_SEARCH_PATHS = (
 					.,
-					../nan,
-					../../node/src,
-					../../node/deps/uv/include,
-					../../node/deps/v8/include,
-					"../../node/deps/debugger-agent/include",
-					../../node/deps/cares/include,
+					../../nan,
+					../../../node/src,
+					../../../node/deps/uv/include,
+					../../../node/deps/v8/include,
+					"../../../node/deps/debugger-agent/include",
+					../../../node/deps/cares/include,
 					box2d/Box2D,
 				);
 				"OTHER_CFLAGS[arch=arm64]" = "-marm";
