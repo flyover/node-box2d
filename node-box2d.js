@@ -116,6 +116,27 @@ box2d.b2DestructionListener.prototype.SayGoodbyeFixture = function (fixture) {}
 box2d.b2ContactFilter = function () {}
 box2d.b2ContactFilter.prototype.ShouldCollide = function (fixtureA, fixtureB)
 {
+	var bodyA = fixtureA.GetBody();
+	var bodyB = fixtureB.GetBody();
+
+	// At least one body should be dynamic or kinematic.
+	if (bodyB.GetType() === box2d.b2BodyType.b2_staticBody && bodyA.GetType() === box2d.b2BodyType.b2_staticBody)
+	{
+		return false;
+	}
+
+	// Does a joint prevent collision?
+	for (var jn = bodyB.GetJointList(); jn; jn = jn.next)
+	{
+		if (jn.other === bodyA)
+		{
+			if (jn.joint.GetCollideConnected() === false)
+			{
+				return false;
+			}
+		}
+	}
+
 	var filterA = fixtureA.GetFilterData();
 	var filterB = fixtureB.GetFilterData();
 
