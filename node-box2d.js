@@ -126,15 +126,9 @@ box2d.b2ContactFilter.prototype.ShouldCollide = function (fixtureA, fixtureB)
 	}
 
 	// Does a joint prevent collision?
-	for (var jn = bodyB.GetJointList(); jn; jn = jn.next)
+	if (bodyB.ShouldCollideConnected(bodyA) === false)
 	{
-		if (jn.other === bodyA)
-		{
-			if (jn.joint.GetCollideConnected() === false)
-			{
-				return false;
-			}
-		}
+		return false;
 	}
 
 	var filterA = fixtureA.GetFilterData();
