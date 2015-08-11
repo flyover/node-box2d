@@ -6547,7 +6547,7 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture*
 		Handle<Value> argv[] = { h_fixtureA, h_fixtureB };
 		return NanMakeCallback(h_that, h_method, countof(argv), argv)->BooleanValue();
 	}
-	return true;
+	return b2ContactFilter::ShouldCollide(fixtureA, fixtureB);
 }
 
 void WrapWorld::WrapContactListener::BeginContact(b2Contact* contact)
