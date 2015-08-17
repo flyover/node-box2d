@@ -116,15 +116,30 @@ box2d.b2DestructionListener.prototype.SayGoodbyeFixture = function (fixture) {}
 box2d.b2ContactFilter = function () {}
 box2d.b2ContactFilter.prototype.ShouldCollide = function (fixtureA, fixtureB)
 {
-	var filter1 = fixtureA.GetFilterData();
-	var filter2 = fixtureB.GetFilterData();
+	var bodyA = fixtureA.GetBody();
+	var bodyB = fixtureB.GetBody();
 
-	if (filter1.groupIndex == filter2.groupIndex && filter1.groupIndex != 0)
+	// At least one body should be dynamic or kinematic.
+	if (bodyB.GetType() === box2d.b2BodyType.b2_staticBody && bodyA.GetType() === box2d.b2BodyType.b2_staticBody)
 	{
-		return (filter1.groupIndex > 0);
+		return false;
 	}
 
-	var collide = (((filter1.maskBits & filter2.categoryBits) != 0) && ((filter1.categoryBits & filter2.maskBits) != 0));
+	// Does a joint prevent collision?
+	if (bodyB.ShouldCollideConnected(bodyA) === false)
+	{
+		return false;
+	}
+
+	var filterA = fixtureA.GetFilterData();
+	var filterB = fixtureB.GetFilterData();
+
+	if (filterA.groupIndex === filterB.groupIndex && filterA.groupIndex !== 0)
+	{
+		return (filterA.groupIndex > 0);
+	}
+
+	var collide = (((filterA.maskBits & filterB.categoryBits) !== 0) && ((filterA.categoryBits & filterB.maskBits) !== 0));
 	return collide;
 }
 

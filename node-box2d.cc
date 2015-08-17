@@ -2125,6 +2125,7 @@ private:
 	CLASS_METHOD_DECLARE(GetUserData)
 	CLASS_METHOD_DECLARE(SetUserData)
 	CLASS_METHOD_DECLARE(GetWorld)
+	CLASS_METHOD_DECLARE(ShouldCollideConnected)
 ///	void Dump();
 };
 
@@ -2187,6 +2188,7 @@ void WrapBody::Init(Handle<Object> exports)
 	CLASS_METHOD_APPLY(tplBody, GetUserData)
 	CLASS_METHOD_APPLY(tplBody, SetUserData)
 	CLASS_METHOD_APPLY(tplBody, GetWorld)
+	CLASS_METHOD_APPLY(tplBody, ShouldCollideConnected)
 	NanAssignPersistent(g_constructor, tplBody->GetFunction());
 	exports->Set(NanNew<String>("b2Body"), NanNew<Function>(g_constructor));
 }
@@ -2484,6 +2486,12 @@ CLASS_METHOD_IMPLEMENT(WrapBody, SetUserData,
 CLASS_METHOD_IMPLEMENT(WrapBody, GetWorld,
 {
 	NanReturnValue(NanNew<Object>(that->m_body_world));
+})
+
+CLASS_METHOD_IMPLEMENT(WrapBody, ShouldCollideConnected,
+{
+	WrapBody* wrap_other = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
+	NanReturnValue(NanNew<Boolean>(that->m_body->ShouldCollideConnected(wrap_other->m_body)));
 })
 
 //// b2JointDef
