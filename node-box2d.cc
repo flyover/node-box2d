@@ -6515,7 +6515,7 @@ private:
 
 //// b2Draw
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 
 //// b2Particle
 
@@ -7522,7 +7522,7 @@ private:
 	public:
 		virtual void SayGoodbye(b2Joint* joint);
 		virtual void SayGoodbye(b2Fixture* fixture);
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		virtual void SayGoodbye(b2ParticleGroup* group);
 		virtual void SayGoodbye(b2ParticleSystem* particleSystem, int32 index);
 		#endif
@@ -7538,7 +7538,7 @@ private:
 		~WrapContactFilter() { m_that = NULL; }
 	public:
 		virtual bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB);
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		virtual bool ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex);
 		virtual bool ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB);
 		#endif
@@ -7555,7 +7555,7 @@ private:
 	public:
 		virtual void BeginContact(b2Contact* contact);
 		virtual void EndContact(b2Contact* contact);
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact);
 		virtual void EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index);
 		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact);
@@ -7578,7 +7578,7 @@ private:
 		virtual void DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
 		virtual void DrawCircle(const b2Vec2& center, float32 radius, const b2Color& color);
 		virtual void DrawSolidCircle(const b2Vec2& center, float32 radius, const b2Vec2& axis, const b2Color& color);
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		virtual void DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count);
 		#endif
 		virtual void DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color);
@@ -7600,7 +7600,7 @@ private:
 			v8::Local<v8::Value> argv[] = { h_fixture };
 			return NANX_bool(Nan::MakeCallback(Nan::GetCurrentContext()->Global(), m_callback, countof(argv), argv));
 		}
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		bool ReportParticle(const b2ParticleSystem* particleSystem, int32 index)
 		{
 			// TODO
@@ -7632,7 +7632,7 @@ private:
 			v8::Local<v8::Value> argv[] = { h_fixture, h_point, h_normal, h_fraction };
 			return NANX_float32(Nan::MakeCallback(Nan::GetCurrentContext()->Global(), m_callback, countof(argv), argv));
 		}
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		float32 ReportParticle(const b2ParticleSystem* particleSystem, int32 index, const b2Vec2& point, const b2Vec2& normal, float32 fraction)
 		{
 			// TODO:
@@ -7732,7 +7732,7 @@ public:
 			NANX_METHOD_APPLY(prototype_template, ClearForces)
 			NANX_METHOD_APPLY(prototype_template, DrawDebugData)
 			NANX_METHOD_APPLY(prototype_template, QueryAABB)
-			#if 1 // B2_ENABLE_PARTICLE
+			#if B2_ENABLE_PARTICLE
 			NANX_METHOD_APPLY(prototype_template, QueryShapeAABB)
 			#endif
 			NANX_METHOD_APPLY(prototype_template, RayCast)
@@ -7755,7 +7755,7 @@ public:
 			NANX_METHOD_APPLY(prototype_template, IsLocked)
 			NANX_METHOD_APPLY(prototype_template, SetAutoClearForces)
 			NANX_METHOD_APPLY(prototype_template, GetAutoClearForces)
-			#if 1 // B2_ENABLE_PARTICLE
+			#if B2_ENABLE_PARTICLE
 			NANX_METHOD_APPLY(prototype_template, CreateParticleSystem)
 			NANX_METHOD_APPLY(prototype_template, DestroyParticleSystem)
 			NANX_METHOD_APPLY(prototype_template, CalculateReasonableParticleIterations)
@@ -8144,7 +8144,7 @@ private:
 		float32 timeStep = NANX_float32(info[0]);
 		int32 velocityIterations = NANX_int32(info[1]);
 		int32 positionIterations = NANX_int32(info[2]);
-		#if 1 // B2_ENABLE_PARTICLE
+		#if B2_ENABLE_PARTICLE
 		int32 particleIterations = (info.Length() > 3)?(NANX_int32(info[3])):(wrap->m_world.CalculateReasonableParticleIterations(timeStep));
 		wrap->m_world.Step(timeStep, velocityIterations, positionIterations, particleIterations);
 		#else
@@ -8181,7 +8181,7 @@ private:
 		WrapQueryCallback wrap_callback(callback);
 		wrap->m_world.QueryAABB(&wrap_callback, wrap_mass_data->GetAABB());
 	}
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 	NANX_METHOD(QueryShapeAABB)
 	{
 		WrapWorld* wrap = Unwrap(info.This());
@@ -8333,7 +8333,7 @@ private:
 ///	const b2ContactManager& GetContactManager() const;
 ///	const b2Profile& GetProfile() const;
 ///	void Dump();
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 	NANX_METHOD(CreateParticleSystem)
 	{
 		WrapWorld* wrap = Unwrap(info.This());
@@ -8394,7 +8394,7 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2Fixture* fixture)
 	}
 }
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleGroup* group)
 {
@@ -8443,7 +8443,7 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture*
 	return b2ContactFilter::ShouldCollide(fixtureA, fixtureB);
 }
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex)
 {
@@ -8504,7 +8504,7 @@ void WrapWorld::WrapContactListener::EndContact(b2Contact* contact)
 	}
 }
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 
 void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact)
 {
@@ -8653,7 +8653,7 @@ void WrapWorld::WrapDraw::DrawSolidCircle(const b2Vec2& center, float32 radius, 
 	}
 }
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 void WrapWorld::WrapDraw::DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count)
 {
 	if (!m_that->m_draw.IsEmpty())
@@ -8825,7 +8825,7 @@ NANX_EXPORT(b2TestOverlap_Shape)
 	info.GetReturnValue().Set(Nan::New(overlap));
 }
 
-#if 1 // B2_ENABLE_PARTICLE
+#if B2_ENABLE_PARTICLE
 
 NANX_EXPORT(b2CalculateParticleIterations)
 {
@@ -8930,11 +8930,11 @@ NAN_MODULE_INIT(init)
 	NANX_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit,			b2Draw::e_aabbBit);
 	NANX_CONSTANT_VALUE(WrapDrawFlags, e_pairBit,			b2Draw::e_pairBit);
 	NANX_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit,	b2Draw::e_centerOfMassBit);
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 	NANX_CONSTANT_VALUE(WrapDrawFlags, e_particleBit,		b2Draw::e_particleBit);
 	#endif
 
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 
 	v8::Local<v8::Object> WrapParticleFlag = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2ParticleFlag"), WrapParticleFlag);
@@ -9016,7 +9016,7 @@ NAN_MODULE_INIT(init)
 	#if 0
 	WrapDraw::Init(target);
 	#endif
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 	WrapParticleColor::Init(target);
 	WrapParticleDef::Init(target);
 	WrapParticleHandle::Init(target);
@@ -9042,7 +9042,7 @@ NAN_MODULE_INIT(init)
 	NANX_EXPORT_APPLY(target, b2TestOverlap_AABB);
 	NANX_EXPORT_APPLY(target, b2TestOverlap_Shape);
 
-	#if 1 // B2_ENABLE_PARTICLE
+	#if B2_ENABLE_PARTICLE
 	NANX_EXPORT_APPLY(target, b2CalculateParticleIterations);
 	#endif
 }
