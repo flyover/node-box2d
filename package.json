@@ -14,7 +14,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "nan": "1.x"
+    "nan": "2.x"
   },
   "scripts": {
     "install": "node-gyp rebuild"
