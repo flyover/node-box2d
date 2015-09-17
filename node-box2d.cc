@@ -26,9 +26,6 @@
 
 #include "node-box2d.h"
 
-#include <node.h>
-#include <v8.h>
-#include <nan.h>
 #include <Box2D/Box2D.h>
 
 ///#include <map>
@@ -40,821 +37,797 @@
 
 #define countof(_a) (sizeof(_a)/sizeof((_a)[0]))
 
-// macros for modules
+// nan extensions
 
-#define MODULE_CONSTANT(target, constant) \
-	(target)->ForceSet(NanNew<v8::String>(#constant), NanNew(constant), static_cast<v8::PropertyAttribute>(v8::ReadOnly|v8::DontDelete))
+#define NANX_STRING(STRING) Nan::New<v8::String>(STRING).ToLocalChecked()
+#define NANX_SYMBOL(SYMBOL) Nan::New<v8::String>(SYMBOL).ToLocalChecked()
 
-#define MODULE_CONSTANT_VALUE(target, constant, value) \
-	(target)->ForceSet(NanNew<v8::String>(#constant), NanNew(value), static_cast<v8::PropertyAttribute>(v8::ReadOnly|v8::DontDelete))
+#define NANX_CONSTANT(TARGET, CONSTANT) Nan::Set(TARGET, NANX_SYMBOL(#CONSTANT), Nan::New(CONSTANT))
+#define NANX_CONSTANT_VALUE(TARGET, CONSTANT, VALUE) Nan::Set(TARGET, NANX_SYMBOL(#CONSTANT), Nan::New(VALUE))
 
-#define MODULE_CONSTANT_NUMBER(target, constant) \
-	(target)->ForceSet(NanNew<v8::String>(#constant), NanNew<v8::Number>(constant), static_cast<v8::PropertyAttribute>(v8::ReadOnly|v8::DontDelete))
+#define NANX_CONSTANT_STRING(TARGET, CONSTANT) Nan::Set(TARGET, NANX_SYMBOL(#CONSTANT), NANX_STRING(CONSTANT))
+#define NANX_CONSTANT_STRING_VALUE(TARGET, CONSTANT, VALUE) Nan::Set(TARGET, NANX_SYMBOL(#CONSTANT), NANX_STRING(VALUE))
 
-#define MODULE_CONSTANT_STRING(target, constant) \
-	(target)->ForceSet(NanNew<v8::String>(#constant), NanNew<v8::String>(constant), static_cast<v8::PropertyAttribute>(v8::ReadOnly|v8::DontDelete))
+#define NANX_EXPORT_APPLY(OBJECT, NAME) Nan::Export(OBJECT, #NAME, _export_##NAME)
+#define NANX_EXPORT(NAME) static NAN_METHOD(_export_##NAME)
 
-#define MODULE_EXPORT_APPLY(target, name) NODE_SET_METHOD(target, #name, _native_##name)
-#define MODULE_EXPORT_DECLARE(name) static NAN_METHOD(_native_##name);
-#define MODULE_EXPORT_IMPLEMENT(name) static NAN_METHOD(_native_##name)
-#define MODULE_EXPORT_IMPLEMENT_TODO(name) static NAN_METHOD(_native_##name) { return NanThrowError(NanNew<v8::String>("not implemented: " #name)); }
+#define NANX_METHOD_APPLY(OBJECT_TEMPLATE, NAME) Nan::SetMethod(OBJECT_TEMPLATE, #NAME, _method_##NAME);
+#define NANX_METHOD(NAME) static NAN_METHOD(_method_##NAME)
 
-// macros for object wrapped classes
+#define NANX_MEMBER_APPLY(OBJECT_TEMPLATE, NAME) Nan::SetAccessor(OBJECT_TEMPLATE, NANX_SYMBOL(#NAME), _get_##NAME, _set_##NAME);
+#define NANX_MEMBER_APPLY_GET(OBJECT_TEMPLATE, NAME) Nan::SetAccessor(OBJECT_TEMPLATE, NANX_SYMBOL(#NAME), _get_##NAME, NULL); // get only
+#define NANX_MEMBER_APPLY_SET(OBJECT_TEMPLATE, NAME) Nan::SetAccessor(OBJECT_TEMPLATE, NANX_SYMBOL(#NAME), NULL, _set_##NAME); // set only
 
-#define CLASS_METHOD_DECLARE(_name) \
-	static NAN_METHOD(_name);
+#define NANX_MEMBER_VALUE(NAME) NANX_MEMBER_VALUE_GET(NAME) NANX_MEMBER_VALUE_SET(NAME)
+#define NANX_MEMBER_VALUE_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Value>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_VALUE_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Value>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
 
-#define CLASS_METHOD_APPLY(_target, _name) \
-	NODE_SET_PROTOTYPE_METHOD(_target, #_name, _name);
+#define NANX_MEMBER_BOOLEAN(TYPE, NAME) NANX_MEMBER_BOOLEAN_GET(TYPE, NAME) NANX_MEMBER_BOOLEAN_SET(TYPE, NAME)
+#define NANX_MEMBER_BOOLEAN_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Boolean>(static_cast<bool>(Peek(info.This())->NAME))); }
+#define NANX_MEMBER_BOOLEAN_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->BooleanValue()); }
 
-#define CLASS_METHOD_IMPLEMENT(_class, _name, _method) \
-	NAN_METHOD(_class::_name)											\
-	{                                                       			\
-		NanScope();                                  					\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_method;														\
-	}
+#define NANX_MEMBER_NUMBER(TYPE, NAME) NANX_MEMBER_NUMBER_GET(TYPE, NAME) NANX_MEMBER_NUMBER_SET(TYPE, NAME)
+#define NANX_MEMBER_NUMBER_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Number>(static_cast<double>(Peek(info.This())->NAME))); }
+#define NANX_MEMBER_NUMBER_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->NumberValue()); }
 
-#define CLASS_MEMBER_DECLARE(_name) \
-	CLASS_MEMBER_DECLARE_GET(_name) \
-	CLASS_MEMBER_DECLARE_SET(_name)
+#define NANX_MEMBER_INTEGER(TYPE, NAME) NANX_MEMBER_INTEGER_GET(TYPE, NAME) NANX_MEMBER_INTEGER_SET(TYPE, NAME)
+#define NANX_MEMBER_INTEGER_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Int32>(static_cast<int32_t>(Peek(info.This())->NAME))); }
+#define NANX_MEMBER_INTEGER_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->IntegerValue()); }
 
-#define CLASS_MEMBER_DECLARE_GET(_name) \
-	static NAN_GETTER(_get_ ## _name);
+#define NANX_MEMBER_INT32(TYPE, NAME) NANX_MEMBER_INT32_GET(TYPE, NAME) NANX_MEMBER_INT32_SET(TYPE, NAME)
+#define NANX_MEMBER_INT32_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Int32>(static_cast<int32_t>(Peek(info.This())->NAME))); }
+#define NANX_MEMBER_INT32_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->Int32Value()); }
 
-#define CLASS_MEMBER_DECLARE_SET(_name) \
-	static NAN_SETTER(_set_ ## _name);
+#define NANX_MEMBER_UINT32(TYPE, NAME) NANX_MEMBER_UINT32_GET(TYPE, NAME) NANX_MEMBER_UINT32_SET(TYPE, NAME)
+#define NANX_MEMBER_UINT32_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Uint32>(static_cast<uint32_t>(Peek(info.This())->NAME))); }
+#define NANX_MEMBER_UINT32_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->Uint32Value()); }
 
-#define CLASS_MEMBER_APPLY(_target, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_name), _get_ ## _name, _set_ ## _name);
+#define NANX_MEMBER_STRING(NAME) NANX_MEMBER_STRING_GET(NAME) NANX_MEMBER_STRING_SET(NAME)
+#define NANX_MEMBER_STRING_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::String>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_STRING_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::String>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
 
-#define CLASS_MEMBER_APPLY_GET(_target, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_name), _get_ ## _name, NULL);
+#define NANX_MEMBER_OBJECT(NAME) NANX_MEMBER_OBJECT_GET(NAME) NANX_MEMBER_OBJECT_SET(NAME)
+#define NANX_MEMBER_OBJECT_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Object>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_OBJECT_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Object>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
 
-#define CLASS_MEMBER_APPLY_SET(_target, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_name), NULL, _set_ ## _name);
+#define NANX_MEMBER_ARRAY(NAME) NANX_MEMBER_ARRAY_GET(NAME) NANX_MEMBER_ARRAY_SET(NAME)
+#define NANX_MEMBER_ARRAY_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Array>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_ARRAY_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Array>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
 
-#define CLASS_MEMBER_IMPLEMENT(_class, _name, _getter, _setter) \
-	CLASS_MEMBER_IMPLEMENT_GET(_class, _name, _getter) \
-	CLASS_MEMBER_IMPLEMENT_SET(_class, _name, _setter)
-
-#define CLASS_MEMBER_IMPLEMENT_GET(_class, _name, _getter) \
-	NAN_GETTER(_class::_get_ ## _name)									\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_getter;														\
-	}
-
-#define CLASS_MEMBER_IMPLEMENT_SET(_class, _name, _setter) \
-	NAN_SETTER(_class::_set_ ## _name)									\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_setter;														\
-	}
-
-#define CLASS_MEMBER_IMPLEMENT_INT32(_class, _m, _cast, _name)		CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(  NanNew<v8::Int32>((_cast) that->_m._name)), that->_m._name = (_cast) value->Int32Value()		)
-#define CLASS_MEMBER_IMPLEMENT_UINT32(_class, _m, _cast, _name)		CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue( NanNew<v8::Uint32>((_cast) that->_m._name)), that->_m._name = (_cast) value->Uint32Value() 	)
-#define CLASS_MEMBER_IMPLEMENT_INTEGER(_class, _m, _cast, _name)	CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew<v8::Integer>((_cast) that->_m._name)), that->_m._name = (_cast) value->IntegerValue() 	)
-#define CLASS_MEMBER_IMPLEMENT_NUMBER(_class, _m, _cast, _name)		CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue( NanNew<v8::Number>((_cast) that->_m._name)), that->_m._name = (_cast) value->NumberValue() 	)
-#define CLASS_MEMBER_IMPLEMENT_BOOLEAN(_class, _m, _cast, _name)	CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew<v8::Boolean>((_cast) that->_m._name)), that->_m._name = (_cast) value->BooleanValue()	)
-#define CLASS_MEMBER_IMPLEMENT_VALUE(_class, _m, _name)				CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, value))
-#define CLASS_MEMBER_IMPLEMENT_STRING(_class, _m, _name)			CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, v8::Handle<v8::String>::Cast(value)))
-#define CLASS_MEMBER_IMPLEMENT_OBJECT(_class, _m, _name)			CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, v8::Handle<v8::Object>::Cast(value)))
-#define CLASS_MEMBER_IMPLEMENT_ARRAY(_class, _m, _name)				CLASS_MEMBER_IMPLEMENT(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, v8::Handle<v8::Array>::Cast(value)))
-
-#define CLASS_MEMBER_INLINE(_class, _name, _getter, _setter) \
-	CLASS_MEMBER_INLINE_GET(_class, _name, _getter) \
-	CLASS_MEMBER_INLINE_SET(_class, _name, _setter)
-
-#define CLASS_MEMBER_INLINE_GET(_class, _name, _getter) \
-	static NAN_GETTER(_get_ ## _name)									\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_getter;														\
-	}
-
-#define CLASS_MEMBER_INLINE_SET(_class, _name, _setter) \
-	static NAN_SETTER(_set_ ## _name)									\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_setter;														\
-	}
-
-#define CLASS_MEMBER_INLINE_INT32(_class, _m, _cast, _name)		CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(  NanNew<v8::Int32>(that->_m._name)), that->_m._name = (_cast) value->Int32Value()	)
-#define CLASS_MEMBER_INLINE_UINT32(_class, _m, _cast, _name)	CLASS_MEMBER_INLINE(_class, _name, NanReturnValue( NanNew<v8::Uint32>(that->_m._name)), that->_m._name = (_cast) value->Uint32Value() 	)
-#define CLASS_MEMBER_INLINE_INTEGER(_class, _m, _cast, _name)	CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(NanNew<v8::Integer>(that->_m._name)), that->_m._name = (_cast) value->IntegerValue()	)
-#define CLASS_MEMBER_INLINE_NUMBER(_class, _m, _cast, _name)	CLASS_MEMBER_INLINE(_class, _name, NanReturnValue( NanNew<v8::Number>(that->_m._name)), that->_m._name = (_cast) value->NumberValue() 	)
-#define CLASS_MEMBER_INLINE_BOOLEAN(_class, _m, _cast, _name)	CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(NanNew<v8::Boolean>(that->_m._name)), that->_m._name = (_cast) value->BooleanValue()	)
-#define CLASS_MEMBER_INLINE_VALUE(_class, _m, _name)			CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, value))
-#define CLASS_MEMBER_INLINE_STRING(_class, _m, _name)			CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, v8::Handle<v8::String>::Cast(value)))
-#define CLASS_MEMBER_INLINE_OBJECT(_class, _m, _name)			CLASS_MEMBER_INLINE(_class, _name, NanReturnValue(NanNew(that->_m##_##_name)), NanAssignPersistent(that->_m##_##_name, v8::Handle<v8::Object>::Cast(value)))
-
-#define CLASS_MEMBER_UNION_APPLY(_target, _u, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_u#_name), _get_ ## _u ## _name, _set_ ## _u ## _name);
-
-#define CLASS_MEMBER_UNION_APPLY_GET(_target, _u, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_u#_name), _get_ ## _u ## _name, NULL);
-
-#define CLASS_MEMBER_UNION_APPLY_SET(_target, _u, _name) \
-	_target->PrototypeTemplate()->SetAccessor(NanNew<v8::String>(#_u#_name), NULL, _set_ ## _u ## _name);
-
-#define CLASS_MEMBER_UNION_INLINE(_class, _u, _name, _getter, _setter) \
-	CLASS_MEMBER_UNION_INLINE_GET(_class, _u, _name, _getter) \
-	CLASS_MEMBER_UNION_INLINE_SET(_class, _u, _name, _setter)
-
-#define CLASS_MEMBER_UNION_INLINE_GET(_class, _u, _name, _getter) \
-	static NAN_GETTER(_get_ ## _u ## _name)								\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_getter;														\
-	}
-
-#define CLASS_MEMBER_UNION_INLINE_SET(_class, _u, _name, _setter) \
-	static NAN_SETTER(_set_ ## _u ## _name)								\
-	{   																\
-		NanScope();  													\
-		_class* that = node::ObjectWrap::Unwrap<_class>(args.This());	\
-		_setter;														\
-	}
-
-#define CLASS_MEMBER_UNION_INLINE_INT32(_class, _m, _u, _cast, _name)	CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(  NanNew<v8::Int32>(that->_m._u._name)), that->_m._u._name = (_cast) value->Int32Value()	)
-#define CLASS_MEMBER_UNION_INLINE_UINT32(_class, _m, _u, _cast, _name)	CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue( NanNew<v8::Uint32>(that->_m._u._name)), that->_m._u._name = (_cast) value->Uint32Value() 	)
-#define CLASS_MEMBER_UNION_INLINE_INTEGER(_class, _m, _u, _cast, _name)	CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(NanNew<v8::Integer>(that->_m._u._name)), that->_m._u._name = (_cast) value->IntegerValue()	)
-#define CLASS_MEMBER_UNION_INLINE_NUMBER(_class, _m, _u, _cast, _name)	CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue( NanNew<v8::Number>(that->_m._u._name)), that->_m._u._name = (_cast) value->NumberValue() 	)
-#define CLASS_MEMBER_UNION_INLINE_BOOLEAN(_class, _m, _u, _cast, _name)	CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(NanNew<v8::Boolean>(that->_m._u._name)), that->_m._u._name = (_cast) value->BooleanValue()	)
-#define CLASS_MEMBER_UNION_INLINE_VALUE(_class, _m, _u, _name)			CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(NanNew(that->_m##_u##_##_name)), NanAssignPersistent(that->_m##_u##_##_name, value))
-#define CLASS_MEMBER_UNION_INLINE_STRING(_class, _m, _u, _name)			CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(NanNew(that->_m##_u##_##_name)), NanAssignPersistent(that->_m##_u##_##_name, v8::Handle<v8::String>::Cast(value)))
-#define CLASS_MEMBER_UNION_INLINE_OBJECT(_class, _m, _u, _name)			CLASS_MEMBER_UNION_INLINE(_class, _u, _name, NanReturnValue(NanNew(that->_m##_u##_##_name)), NanAssignPersistent(that->_m##_u##_##_name, v8::Handle<v8::Object>::Cast(value)))
-
-using namespace v8;
+#define NANX_bool(value)		((value)->BooleanValue())
+#define NANX_int(value)			((value)->Int32Value())
+#define NANX_int8(value)		static_cast<int8>((value)->Int32Value())
+#define NANX_uint8(value)		static_cast<uint8>((value)->Uint32Value())
+#define NANX_int16(value)		static_cast<int16>((value)->Int32Value())
+#define NANX_uint16(value)		static_cast<uint16>((value)->Uint32Value())
+#define NANX_int32(value)		static_cast<int32>((value)->Int32Value())
+#define NANX_uint32(value)		static_cast<uint32>((value)->Uint32Value())
+#define NANX_float32(value)		static_cast<float32>((value)->NumberValue())
+#define NANX_b2BodyType(value)	static_cast<b2BodyType>((value)->IntegerValue())
 
 namespace node_box2d {
 
 //// b2Vec2
 
-class WrapVec2 : public node::ObjectWrap
+class WrapVec2 : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Vec2& o);
-
 private:
 	b2Vec2 m_v2;
-
 private:
 	WrapVec2() {}
-	WrapVec2(const b2Vec2& o) : m_v2(o.x, o.y) {}
+	WrapVec2(const b2Vec2& v2) { m_v2 = v2; } // struct copy
 	WrapVec2(float32 x, float32 y) : m_v2(x, y) {}
 	~WrapVec2() {}
-
 public:
+	b2Vec2* Peek() { return &m_v2; }
+	//b2Vec2& GetVec2() { return m_v2; }
 	const b2Vec2& GetVec2() const { return m_v2; }
 	void SetVec2(const b2Vec2& v2) { m_v2 = v2; } // struct copy
-
+public:
+	static WrapVec2* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapVec2* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapVec2>(object); }
+	static b2Vec2* Peek(v8::Local<v8::Value> value) { WrapVec2* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapVec2* wrap = new WrapVec2();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Vec2& v2)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapVec2* wrap = new WrapVec2(v2);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(x)
-	CLASS_MEMBER_DECLARE(y)
-
-	CLASS_METHOD_DECLARE(SetZero)
-	CLASS_METHOD_DECLARE(Set)
-	CLASS_METHOD_DECLARE(Copy)
-	CLASS_METHOD_DECLARE(SelfNeg)
-	CLASS_METHOD_DECLARE(SelfAdd)
-	CLASS_METHOD_DECLARE(SelfAddXY)
-	CLASS_METHOD_DECLARE(SelfSub)
-	CLASS_METHOD_DECLARE(SelfSubXY)
-	CLASS_METHOD_DECLARE(SelfMul)
-	CLASS_METHOD_DECLARE(Length)
-	CLASS_METHOD_DECLARE(LengthSquared)
-	CLASS_METHOD_DECLARE(Normalize)
-	CLASS_METHOD_DECLARE(SelfNormalize)
-	CLASS_METHOD_DECLARE(IsValid)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Vec2"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, x)
+			NANX_MEMBER_APPLY(prototype_template, y)
+			NANX_METHOD_APPLY(prototype_template, SetZero)
+			NANX_METHOD_APPLY(prototype_template, Set)
+			NANX_METHOD_APPLY(prototype_template, Copy)
+			NANX_METHOD_APPLY(prototype_template, SelfNeg)
+			NANX_METHOD_APPLY(prototype_template, SelfAdd)
+			NANX_METHOD_APPLY(prototype_template, SelfAddXY)
+			NANX_METHOD_APPLY(prototype_template, SelfSub)
+			NANX_METHOD_APPLY(prototype_template, SelfSubXY)
+			NANX_METHOD_APPLY(prototype_template, SelfMul)
+			NANX_METHOD_APPLY(prototype_template, Length)
+			NANX_METHOD_APPLY(prototype_template, LengthSquared)
+			NANX_METHOD_APPLY(prototype_template, Normalize)
+			NANX_METHOD_APPLY(prototype_template, SelfNormalize)
+			NANX_METHOD_APPLY(prototype_template, IsValid)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			float32 x = (info.Length() > 0) ? NANX_float32(info[0]) : 0.0f;
+			float32 y = (info.Length() > 1) ? NANX_float32(info[1]) : 0.0f;
+			WrapVec2* wrap = new WrapVec2(x, y);
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_NUMBER(float32, x)
+	NANX_MEMBER_NUMBER(float32, y)
+	NANX_METHOD(SetZero)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->SetZero();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(Set)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->Set(NANX_float32(info[0]), NANX_float32(info[1]));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(Copy)
+	{
+		b2Vec2* that = Peek(info.This());
+		b2Vec2* other = Peek(info[0]);
+		*that = *other;
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfNeg)
+	{
+		b2Vec2* that = Peek(info.This());
+		*that = that->operator-();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfAdd)
+	{
+		b2Vec2* that = Peek(info.This());
+		b2Vec2* v = Peek(info[0]);
+		that->operator+=(*v);
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfAddXY)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->operator+=(b2Vec2(NANX_float32(info[0]), NANX_float32(info[1])));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfSub)
+	{
+		b2Vec2* that = Peek(info.This());
+		b2Vec2* v = Peek(info[0]);
+		that->operator-=(*v);
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfSubXY)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->operator-=(b2Vec2(NANX_float32(info[0]), NANX_float32(info[1])));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SelfMul)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->operator*=(NANX_float32(info[0]));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(Length)
+	{
+		b2Vec2* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->Length()));
+	}
+	NANX_METHOD(LengthSquared)
+	{
+		b2Vec2* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->LengthSquared()));
+	}
+	NANX_METHOD(Normalize)
+	{
+		b2Vec2* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->Normalize()));
+	}
+	NANX_METHOD(SelfNormalize)
+	{
+		b2Vec2* that = Peek(info.This());
+		that->Normalize();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(IsValid)
+	{
+		b2Vec2* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->IsValid()));
+	}
 };
-
-Persistent<Function> WrapVec2::g_constructor;
-
-void WrapVec2::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplVec2 = NanNew<FunctionTemplate>(New);
-	tplVec2->SetClassName(NanNew<String>("b2Vec2"));
-	tplVec2->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplVec2, x)
-	CLASS_MEMBER_APPLY(tplVec2, y)
-	CLASS_METHOD_APPLY(tplVec2, SetZero)
-	CLASS_METHOD_APPLY(tplVec2, Set)
-	CLASS_METHOD_APPLY(tplVec2, Copy)
-	CLASS_METHOD_APPLY(tplVec2, SelfNeg)
-	CLASS_METHOD_APPLY(tplVec2, SelfAdd)
-	CLASS_METHOD_APPLY(tplVec2, SelfAddXY)
-	CLASS_METHOD_APPLY(tplVec2, SelfSub)
-	CLASS_METHOD_APPLY(tplVec2, SelfSubXY)
-	CLASS_METHOD_APPLY(tplVec2, SelfMul)
-	CLASS_METHOD_APPLY(tplVec2, Length)
-	CLASS_METHOD_APPLY(tplVec2, LengthSquared)
-	CLASS_METHOD_APPLY(tplVec2, Normalize)
-	CLASS_METHOD_APPLY(tplVec2, SelfNormalize)
-	CLASS_METHOD_APPLY(tplVec2, IsValid)
-	NanAssignPersistent(g_constructor, tplVec2->GetFunction());
-	exports->Set(NanNew<String>("b2Vec2"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapVec2::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapVec2::NewInstance(const b2Vec2& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapVec2* that = node::ObjectWrap::Unwrap<WrapVec2>(instance);
-	that->SetVec2(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapVec2::New)
-{
-	NanScope();
-	float32 x = (args.Length() > 0) ? (float32) args[0]->NumberValue() : 0.0f;
-	float32 y = (args.Length() > 1) ? (float32) args[1]->NumberValue() : 0.0f;
-	WrapVec2* that = new WrapVec2(x, y);
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapVec2, m_v2, float32, x)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapVec2, m_v2, float32, y)
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SetZero,
-{
-	that->m_v2.SetZero();
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, Set,
-{
-	that->m_v2.Set((float32) args[0]->NumberValue(), (float32) args[1]->NumberValue());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, Copy,
-{
-	WrapVec2* other = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	that->SetVec2(other->GetVec2());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfNeg,
-{
-	that->m_v2 = -that->m_v2;
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfAdd,
-{
-	that->m_v2.operator+=(node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]))->GetVec2());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfAddXY,
-{
-	that->m_v2.operator+=(b2Vec2((float32) args[0]->NumberValue(), (float32) args[1]->NumberValue()));
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfSub,
-{
-	that->m_v2.operator-=(node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]))->GetVec2());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfSubXY,
-{
-	that->m_v2.operator-=(b2Vec2((float32) args[0]->NumberValue(), (float32) args[1]->NumberValue()));
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfMul,
-{
-	that->m_v2.operator*=((float32) args[0]->NumberValue());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, Length,
-{
-	NanReturnValue(NanNew<Number>(that->m_v2.Length()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, LengthSquared,
-{
-	NanReturnValue(NanNew<Number>(that->m_v2.LengthSquared()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, Normalize,
-{
-	NanReturnValue(NanNew<Number>(that->m_v2.Normalize()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, SelfNormalize,
-{
-	that->m_v2.Normalize();
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapVec2, IsValid,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_v2.IsValid()));
-})
 
 //// b2Rot
 
-class WrapRot : public node::ObjectWrap
+class WrapRot : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Rot& o);
-
+	b2Rot m_rot;
 private:
-	b2Rot m_r;
-
-private:
-	WrapRot(float32 angle) : m_r(angle) {}
-	WrapRot(const b2Rot& o) : m_r(o.GetAngle()) {}
+	WrapRot() {}
+	WrapRot(const b2Rot& rot) { m_rot = rot; } // struct copy
+	WrapRot(float32 angle) : m_rot(angle) {}
 	~WrapRot() {}
-
 public:
-	const b2Rot& GetRot() const { return m_r; }
-	void SetRot(const b2Rot& r) { m_r = r; } // struct copy
-
+	b2Rot* Peek() { return &m_rot; }
+	//b2Rot& GetRot() { return m_rot; }
+	const b2Rot& GetRot() const { return m_rot; }
+	void SetRot(const b2Rot& rot) { m_rot = rot; } // struct copy
+public:
+	static WrapRot* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapRot* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapRot>(object); }
+	static b2Rot* Peek(v8::Local<v8::Value> value) { WrapRot* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapRot* wrap = new WrapRot();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Rot& rot)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapRot* wrap = new WrapRot(rot);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(s)
-	CLASS_MEMBER_DECLARE(c)
-
-	CLASS_METHOD_DECLARE(Set)
-//	void SetIdentity()
-	CLASS_METHOD_DECLARE(GetAngle)
-//	b2Vec2 GetXAxis() const
-//	b2Vec2 GetYAxis() const
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Rot"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, s)
+			NANX_MEMBER_APPLY(prototype_template, c)
+			NANX_METHOD_APPLY(prototype_template, Set)
+			//void SetIdentity()
+			NANX_METHOD_APPLY(prototype_template, GetAngle)
+			//b2Vec2 GetXAxis() const
+			//b2Vec2 GetYAxis() const
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			float32 angle = (info.Length() > 0) ? NANX_float32(info[0]) : 0.0f;
+			WrapRot* wrap = new WrapRot(angle);
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_NUMBER(float32, s)
+	NANX_MEMBER_NUMBER(float32, c)
+	NANX_METHOD(Set)
+	{
+		b2Rot* that = Peek(info.This());
+		that->Set(NANX_float32(info[0]));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(GetAngle)
+	{
+		b2Rot* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->GetAngle()));
+	}
 };
-
-Persistent<Function> WrapRot::g_constructor;
-
-void WrapRot::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplRot = NanNew<FunctionTemplate>(New);
-	tplRot->SetClassName(NanNew<String>("b2Rot"));
-	tplRot->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplRot, s)
-	CLASS_MEMBER_APPLY(tplRot, c)
-	CLASS_METHOD_APPLY(tplRot, Set)
-	CLASS_METHOD_APPLY(tplRot, GetAngle)
-	NanAssignPersistent(g_constructor, tplRot->GetFunction());
-	exports->Set(NanNew<String>("b2Rot"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapRot::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapRot::NewInstance(const b2Rot& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapRot* that = node::ObjectWrap::Unwrap<WrapRot>(instance);
-	that->SetRot(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapRot::New)
-{
-	NanScope();
-	float32 angle = (args.Length() > 0) ? (float32) args[0]->NumberValue() : 0.0f;
-	WrapRot* that = new WrapRot(angle);
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRot, m_r, float32, s)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRot, m_r, float32, c)
-
-CLASS_METHOD_IMPLEMENT(WrapRot, Set,
-{
-	that->m_r.Set((float32) args[0]->NumberValue());
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRot, GetAngle,
-{
-	NanReturnValue(NanNew<Number>(that->m_r.GetAngle()));
-})
 
 //// b2Transform
 
-class WrapTransform : public node::ObjectWrap
+class WrapTransform : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Transform& o);
-
-private:
 	b2Transform m_xf;
-	Persistent<Object> m_xf_p; // m_xf.p
-	Persistent<Object> m_xf_q; // m_xf.q
-
+	Nan::Persistent<v8::Object> m_wrap_p; // m_xf.p
+	Nan::Persistent<v8::Object> m_wrap_q; // m_xf.q
 private:
 	WrapTransform()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_xf_p, WrapVec2::NewInstance(m_xf.p));
-		NanAssignPersistent(m_xf_q, WrapRot::NewInstance(m_xf.q));
+		m_wrap_p.Reset(WrapVec2::NewInstance(m_xf.p));
+		m_wrap_q.Reset(WrapRot::NewInstance(m_xf.q));
 	}
+	//WrapTransform(const b2Transform& xf) { m_xf = xf; } // struct copy
+	//WrapTransform(float32 angle) : m_xf(angle) {}
 	~WrapTransform()
 	{
-		NanDisposePersistent(m_xf_p);
-		NanDisposePersistent(m_xf_q);
+		m_wrap_p.Reset();
+		m_wrap_q.Reset();
 	}
-
 public:
-	void SyncPull()
-	{
-		// sync: pull data from javascript objects
-		NanScope();
-		m_xf.p = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_xf_p))->GetVec2(); // struct copy
-		m_xf.q = node::ObjectWrap::Unwrap<WrapRot>(NanNew<Object>(m_xf_q))->GetRot(); // struct copy
-	}
-
-	void SyncPush()
-	{
-		// sync: push data into javascript objects
-		NanScope();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_xf_p))->SetVec2(m_xf.p);
-		node::ObjectWrap::Unwrap<WrapRot>(NanNew<Object>(m_xf_q))->SetRot(m_xf.q);
-	}
-
+	b2Transform* Peek() { return &m_xf; }
+	//b2Transform& GetTransform() { return m_xf; }
+	//const b2Transform& GetTransform() const { return m_xf; }
+	//void SetTransform(const b2Transform& xf) { m_xf = xf; } // struct copy
 	const b2Transform& GetTransform()
 	{
 		SyncPull();
 		return m_xf;
 	}
-
 	void SetTransform(const b2Transform& xf)
 	{
 		m_xf = xf; // struct copy
 		SyncPush();
 	}
-
 	void SetTransform(const b2Vec2& position, float32 angle)
 	{
 		m_xf.Set(position, angle);
 		SyncPush();
 	}
-
-private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(p)
-	CLASS_MEMBER_DECLARE(q)
-
-	CLASS_METHOD_DECLARE(SetIdentity)
-	CLASS_METHOD_DECLARE(Set)
-};
-
-Persistent<Function> WrapTransform::g_constructor;
-
-void WrapTransform::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplTransform = NanNew<FunctionTemplate>(New);
-	tplTransform->SetClassName(NanNew<String>("b2Transform"));
-	tplTransform->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplTransform, p)
-	CLASS_MEMBER_APPLY(tplTransform, q)
-	CLASS_METHOD_APPLY(tplTransform, SetIdentity)
-	CLASS_METHOD_APPLY(tplTransform, Set)
-	NanAssignPersistent(g_constructor, tplTransform->GetFunction());
-	exports->Set(NanNew<String>("b2Transform"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapTransform::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapTransform::NewInstance(const b2Transform& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapTransform* that = node::ObjectWrap::Unwrap<WrapTransform>(instance);
-	that->SetTransform(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapTransform::New)
-{
-	NanScope();
-	WrapTransform* that = new WrapTransform();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapTransform, m_xf, p) // m_xf_p
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapTransform, m_xf, q) // m_xf_q
-
-CLASS_METHOD_IMPLEMENT(WrapTransform, SetIdentity,
-{
-	that->m_xf.SetIdentity();
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapTransform, Set,
-{
-	WrapVec2* position = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	float32 angle = (float32) args[1]->NumberValue();
-	that->SetTransform(position->GetVec2(), angle);
-	NanReturnValue(args.This());
-})
-
-//// b2AABB
-
-class WrapAABB : public node::ObjectWrap
-{
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2AABB& o);
-
-private:
-	b2AABB m_aabb;
-	Persistent<Object> m_aabb_lowerBound; // m_aabb.lowerBound
-	Persistent<Object> m_aabb_upperBound; // m_aabb.upperBound
-
-private:
-	WrapAABB()
-	{
-		// create javascript objects
-		NanAssignPersistent(m_aabb_lowerBound, WrapVec2::NewInstance(m_aabb.lowerBound));
-		NanAssignPersistent(m_aabb_upperBound, WrapVec2::NewInstance(m_aabb.upperBound));
-	}
-	~WrapAABB()
-	{
-		NanDisposePersistent(m_aabb_lowerBound);
-		NanDisposePersistent(m_aabb_upperBound);
-	}
-
-public:
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		m_aabb.lowerBound = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_aabb_lowerBound))->GetVec2(); // struct copy
-		m_aabb.upperBound = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_aabb_upperBound))->GetVec2(); // struct copy
+		m_xf.p = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_p))->GetVec2(); // struct copy
+		m_xf.q = WrapRot::Unwrap(Nan::New<v8::Object>(m_wrap_q))->GetRot(); // struct copy
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_aabb_lowerBound))->SetVec2(m_aabb.lowerBound);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_aabb_upperBound))->SetVec2(m_aabb.upperBound);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_p))->SetVec2(m_xf.p);
+		WrapRot::Unwrap(Nan::New<v8::Object>(m_wrap_q))->SetRot(m_xf.q);
 	}
+public:
+	static WrapTransform* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapTransform* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapTransform>(object); }
+	static b2Transform* Peek(v8::Local<v8::Value> value) { WrapTransform* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapTransform* wrap = new WrapTransform();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Transform& xf)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapTransform* wrap = new WrapTransform();
+		wrap->SetTransform(xf);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Transform"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, p)
+			NANX_MEMBER_APPLY(prototype_template, q)
+			NANX_METHOD_APPLY(prototype_template, SetIdentity)
+			NANX_METHOD_APPLY(prototype_template, Set)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapTransform* wrap = new WrapTransform();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(p) // m_wrap_p
+	NANX_MEMBER_OBJECT(q) // m_wrap_q
+	NANX_METHOD(SetIdentity)
+	{
+		//b2Transform* that = Peek(info.This());
+		WrapTransform* wrap = Unwrap(info.This());
+		b2Transform* that = &wrap->m_xf;
+		that->SetIdentity();
+		wrap->SyncPush();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(Set)
+	{
+		//b2Transform* that = Peek(info.This());
+		WrapTransform* wrap = Unwrap(info.This());
+		b2Transform* that = &wrap->m_xf;
+		b2Vec2* position = WrapVec2::Peek(info[0]);
+		float32 angle = NANX_float32(info[1]);
+		that->Set(*position, angle);
+		wrap->SyncPush();
+		info.GetReturnValue().Set(info.This());
+	}
+};
 
+//// b2AABB
+
+class WrapAABB : public Nan::ObjectWrap
+{
+private:
+	b2AABB m_aabb;
+	Nan::Persistent<v8::Object> m_wrap_lowerBound; // m_aabb.lowerBound
+	Nan::Persistent<v8::Object> m_wrap_upperBound; // m_aabb.upperBound
+private:
+	WrapAABB()
+	{
+		m_wrap_lowerBound.Reset(WrapVec2::NewInstance(m_aabb.lowerBound));
+		m_wrap_upperBound.Reset(WrapVec2::NewInstance(m_aabb.upperBound));
+	}
+	~WrapAABB()
+	{
+		m_wrap_lowerBound.Reset();
+		m_wrap_upperBound.Reset();
+	}
+public:
+	b2AABB* Peek() { return &m_aabb; }
 	const b2AABB& GetAABB()
 	{
 		SyncPull();
 		return m_aabb;
 	}
-
-	void SetAABB(const b2AABB& aabb)
+	void SetAABB(const b2AABB& mass_data)
 	{
-		m_aabb = aabb; // struct copy
+		m_aabb = mass_data; // struct copy
 		SyncPush();
 	}
-
-private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(lowerBound)
-	CLASS_MEMBER_DECLARE(upperBound)
-
-	CLASS_METHOD_DECLARE(IsValid)
-	CLASS_METHOD_DECLARE(GetCenter)
-	CLASS_METHOD_DECLARE(GetExtents)
-	CLASS_METHOD_DECLARE(GetPerimeter)
-};
-
-Persistent<Function> WrapAABB::g_constructor;
-
-void WrapAABB::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplAABB = NanNew<FunctionTemplate>(New);
-	tplAABB->SetClassName(NanNew<String>("b2AABB"));
-	tplAABB->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplAABB, lowerBound)
-	CLASS_MEMBER_APPLY(tplAABB, upperBound)
-	CLASS_METHOD_APPLY(tplAABB, IsValid)
-	CLASS_METHOD_APPLY(tplAABB, GetCenter)
-	CLASS_METHOD_APPLY(tplAABB, GetExtents)
-	CLASS_METHOD_APPLY(tplAABB, GetPerimeter)
-	NanAssignPersistent(g_constructor, tplAABB->GetFunction());
-	exports->Set(NanNew<String>("b2AABB"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapAABB::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapAABB::NewInstance(const b2AABB& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapAABB* that = node::ObjectWrap::Unwrap<WrapAABB>(instance);
-	that->SetAABB(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapAABB::New)
-{
-	NanScope();
-	WrapAABB* that = new WrapAABB();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapAABB, m_aabb, lowerBound) // m_aabb_lowerBound
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapAABB, m_aabb, upperBound) // m_aabb_upperBound
-
-CLASS_METHOD_IMPLEMENT(WrapAABB, IsValid,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_aabb.IsValid()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapAABB, GetCenter,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_aabb.GetCenter());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapAABB, GetExtents,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_aabb.GetExtents());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapAABB, GetPerimeter,
-{
-	NanReturnValue(NanNew<Number>(that->m_aabb.GetPerimeter()));
-})
-
-//// b2MassData
-
-class WrapMassData : public node::ObjectWrap
-{
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2MassData& o);
-
-private:
-	b2MassData m_mass_data;
-	Persistent<Object> m_mass_data_center; // m_mass_data.center
-
-private:
-	WrapMassData()
-	{
-		// create javascript objects
-		NanAssignPersistent(m_mass_data_center, WrapVec2::NewInstance(m_mass_data.center));
-	}
-	~WrapMassData()
-	{
-		NanDisposePersistent(m_mass_data_center);
-	}
-
-public:
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		m_mass_data.center = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_mass_data_center))->GetVec2(); // struct copy
+		m_aabb.lowerBound = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_lowerBound))->GetVec2(); // struct copy
+		m_aabb.upperBound = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_upperBound))->GetVec2(); // struct copy
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_mass_data_center))->SetVec2(m_mass_data.center);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_lowerBound))->SetVec2(m_aabb.lowerBound);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_upperBound))->SetVec2(m_aabb.upperBound);
 	}
+public:
+	static WrapAABB* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapAABB* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapAABB>(object); }
+	static b2AABB* Peek(v8::Local<v8::Value> value) { WrapAABB* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapAABB* wrap = new WrapAABB();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2AABB& mass_data)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapAABB* wrap = new WrapAABB();
+		wrap->SetAABB(mass_data);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2AABB"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, lowerBound)
+			NANX_MEMBER_APPLY(prototype_template, upperBound)
+			NANX_METHOD_APPLY(prototype_template, IsValid)
+			NANX_METHOD_APPLY(prototype_template, GetCenter)
+			NANX_METHOD_APPLY(prototype_template, GetExtents)
+			NANX_METHOD_APPLY(prototype_template, GetPerimeter)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapAABB* wrap = new WrapAABB();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(lowerBound) // m_wrap_lowerBound
+	NANX_MEMBER_OBJECT(upperBound) // m_wrap_upperBound
+	NANX_METHOD(IsValid)
+	{
+		b2AABB* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->IsValid()));
+	}
+	NANX_METHOD(GetCenter)
+	{
+		//b2AABB* that = Peek(info.This());
+		WrapAABB* wrap = Unwrap(info.This());
+		b2AABB* that = &wrap->m_aabb;
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(that->GetCenter());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetExtents)
+	{
+		//b2AABB* that = Peek(info.This());
+		WrapAABB* wrap = Unwrap(info.This());
+		b2AABB* that = &wrap->m_aabb;
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(that->GetExtents());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetPerimeter)
+	{
+		b2AABB* that = Peek(info.This());
+		info.GetReturnValue().Set(Nan::New(that->GetPerimeter()));
+	}
+};
 
+//// b2MassData
+
+class WrapMassData : public Nan::ObjectWrap
+{
+private:
+	b2MassData m_mass_data;
+	Nan::Persistent<v8::Object> m_wrap_center; // m_mass_data.center
+private:
+	WrapMassData()
+	{
+		m_wrap_center.Reset(WrapVec2::NewInstance(m_mass_data.center));
+	}
+	~WrapMassData()
+	{
+		m_wrap_center.Reset();
+	}
+public:
+	b2MassData* Peek() { return &m_mass_data; }
 	const b2MassData& GetMassData()
 	{
 		SyncPull();
 		return m_mass_data;
 	}
-
 	void SetMassData(const b2MassData& mass_data)
 	{
 		m_mass_data = mass_data; // struct copy
 		SyncPush();
 	}
-
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+		m_mass_data.center = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_center))->GetVec2(); // struct copy
+	}
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_center))->SetVec2(m_mass_data.center);
+	}
+public:
+	static WrapMassData* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapMassData* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapMassData>(object); }
+	static b2MassData* Peek(v8::Local<v8::Value> value) { WrapMassData* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMassData* wrap = new WrapMassData();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2MassData& mass_data)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMassData* wrap = new WrapMassData();
+		wrap->SetMassData(mass_data);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(mass)
-	CLASS_MEMBER_DECLARE(center)
-	CLASS_MEMBER_DECLARE(I)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2MassData"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, mass)
+			NANX_MEMBER_APPLY(prototype_template, center)
+			NANX_MEMBER_APPLY(prototype_template, I)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapMassData* wrap = new WrapMassData();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_NUMBER(float32, mass)
+	NANX_MEMBER_OBJECT(center) // m_wrap_center
+	NANX_MEMBER_NUMBER(float32, I)
 };
-
-Persistent<Function> WrapMassData::g_constructor;
-
-void WrapMassData::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplMassData = NanNew<FunctionTemplate>(New);
-	tplMassData->SetClassName(NanNew<String>("b2MassData"));
-	tplMassData->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplMassData, mass)
-	CLASS_MEMBER_APPLY(tplMassData, center)
-	CLASS_MEMBER_APPLY(tplMassData, I)
-	NanAssignPersistent(g_constructor, tplMassData->GetFunction());
-	exports->Set(NanNew<String>("b2MassData"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapMassData::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapMassData::NewInstance(const b2MassData& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapMassData* that = node::ObjectWrap::Unwrap<WrapMassData>(instance);
-	that->SetMassData(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapMassData::New)
-{
-	NanScope();
-	WrapMassData* that = new WrapMassData();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMassData, m_mass_data, float32, mass)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapMassData, m_mass_data, center) // m_mass_data_center
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMassData, m_mass_data, float32, I)
 
 //// b2Shape
 
-class WrapShape : public node::ObjectWrap
+class WrapShape : public Nan::ObjectWrap
 {
+protected:
+	WrapShape() {}
+	~WrapShape() {}
 public:
-	static Persistent<FunctionTemplate> g_constructor_template;
-
+	b2Shape* Peek() { return &GetShape(); }
+	virtual b2Shape& GetShape() = 0;
+	virtual void SyncPull() {}
+	virtual void SyncPush() {}
+public:
+	const b2Shape& UseShape() { SyncPull(); return GetShape(); }
+///private:
 ///	static std::map<b2Shape*,WrapShape*> g_wrap_map;
-
 public:
-	static void Init(Handle<Object> exports);
-
 	static WrapShape* GetWrap(b2Shape* shape)
 	{
-		//return (WrapShape*) shape->GetUserData();
+		//return static_cast<WrapShape*>(shape->GetUserData());
 ///		std::map<b2Shape*,WrapShape*>::iterator it = g_wrap_map.find(shape);
 ///		if (it != g_wrap_map.end())
 ///		{
@@ -886,639 +859,745 @@ public:
 ///			}
 ///		}
 	}
-
 public:
-	WrapShape() {}
-	~WrapShape() {}
-
+	static WrapShape* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapShape* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapShape>(object); }
+	static b2Shape* Peek(v8::Local<v8::Value> value) { WrapShape* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+//public:
+//	static NAN_MODULE_INIT(Init)
+//	{
+//		v8::Local<v8::Function> constructor = GetConstructor();
+//		target->Set(constructor->GetName(), constructor);
+//	}
+//	static v8::Local<v8::Object> NewInstance()
+//	{
+//		Nan::EscapableHandleScope scope;
+//		v8::Local<v8::Function> constructor = GetConstructor();
+//		v8::Local<v8::Object> instance = constructor->NewInstance();
+//		WrapShape* wrap = new WrapShape();
+//		wrap->Wrap(instance);
+//		return scope.Escape(instance);
+//	}
+//	static v8::Local<v8::Object> NewInstance(const b2Shape& shape)
+//	{
+//		Nan::EscapableHandleScope scope;
+//		v8::Local<v8::Function> constructor = GetConstructor();
+//		v8::Local<v8::Object> instance = constructor->NewInstance();
+//		WrapShape* wrap = new WrapShape();
+//		wrap->SetShape(shape);
+//		wrap->Wrap(instance);
+//		return scope.Escape(instance);
+//	}
 public:
-	virtual void SyncPull() {}
-	virtual void SyncPush() {}
-
-	virtual b2Shape& GetShape() = 0;
-
-	const b2Shape& UseShape() { SyncPull(); return GetShape(); }
-
+//	static v8::Local<v8::Function> GetConstructor()
+//	{
+//		Nan::EscapableHandleScope scope;
+//		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+//		v8::Local<v8::Function> constructor = function_template->GetFunction();
+//		return scope.Escape(constructor);
+//	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+//			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>();
+			function_template->SetClassName(NANX_SYMBOL("b2Shape"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, m_type)
+			NANX_MEMBER_APPLY(prototype_template, m_radius)
+			NANX_METHOD_APPLY(prototype_template, GetType)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	CLASS_MEMBER_DECLARE(m_type)
-	CLASS_MEMBER_DECLARE(m_radius)
-
-	CLASS_METHOD_DECLARE(GetType)
+//	static NAN_METHOD(New)
+//	{
+//		if (info.IsConstructCall())
+//		{
+//			WrapShape* wrap = new WrapShape();
+//			wrap->Wrap(info.This());
+//			info.GetReturnValue().Set(info.This());
+//		}
+//		else
+//		{
+//			v8::Local<v8::Function> constructor = GetConstructor();
+//			info.GetReturnValue().Set(constructor->NewInstance());
+//		}
+//	}
+	NANX_MEMBER_INTEGER(b2Shape::Type, m_type)
+	NANX_MEMBER_NUMBER(float32, m_radius)
+	NANX_METHOD(GetType)
+	{
+		//b2Shape* that = Peek(info.This());
+		WrapShape* wrap = Unwrap(info.This());
+		//b2Shape* that = &wrap->m_shape;
+		//wrap->SyncPush();
+		//info.GetReturnValue().Set(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->GetShape().GetType()));
+	}
 };
-
-Persistent<FunctionTemplate> WrapShape::g_constructor_template;
-
-///std::map<b2Shape*,WrapShape*> WrapShape::g_wrap_map;
-
-void WrapShape::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplShape = NanNew<FunctionTemplate>();
-	tplShape->SetClassName(NanNew<String>("b2Shape"));
-	tplShape->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplShape, m_type)
-	CLASS_MEMBER_APPLY(tplShape, m_radius)
-	CLASS_METHOD_APPLY(tplShape, GetType)
-	NanAssignPersistent(g_constructor_template, tplShape);
-	exports->Set(NanNew<String>("b2Shape"), NanNew<FunctionTemplate>(g_constructor_template)->GetFunction());
-}
-
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapShape, GetShape(), b2Shape::Type, m_type)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapShape, GetShape(), float32, m_radius)
-
-CLASS_METHOD_IMPLEMENT(WrapShape, GetType,
-{
-	NanReturnValue(NanNew<Integer>(that->GetShape().GetType()));
-})
 
 //// b2CircleShape
 
 class WrapCircleShape : public WrapShape
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance(float32 radius = 0.0f);
-
-private:
 	b2CircleShape m_circle;
-	Persistent<Object> m_circle_m_p; // m_circle.m_p
-
+	Nan::Persistent<v8::Object> m_wrap_m_p; // m_circle.m_p
 private:
 	WrapCircleShape(float32 radius = 0.0f)
 	{
-		// create javascript objects
-		NanAssignPersistent(m_circle_m_p, WrapVec2::NewInstance(m_circle.m_p));
-
 		m_circle.m_radius = radius;
+		m_wrap_m_p.Reset(WrapVec2::NewInstance(m_circle.m_p));
 	}
 	~WrapCircleShape()
 	{
-		NanDisposePersistent(m_circle_m_p);
+		m_wrap_m_p.Reset();
 	}
-
 public:
+	b2CircleShape* Peek() { return &m_circle; }
+	virtual b2Shape& GetShape() { return m_circle; } // override WrapShape
 	virtual void SyncPull() // override WrapShape
 	{
 		// sync: pull data from javascript objects
-		m_circle.m_p = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_circle_m_p))->GetVec2(); // struct copy
+		m_circle.m_p = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_p))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapShape
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_circle_m_p))->SetVec2(m_circle.m_p);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_p))->SetVec2(m_circle.m_p);
 	}
-
-	virtual b2Shape& GetShape() { return m_circle; } // override WrapShape
-
+public:
+	static WrapCircleShape* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapCircleShape* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapCircleShape>(object); }
+	static b2CircleShape* Peek(v8::Local<v8::Value> value) { WrapCircleShape* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapCircleShape* wrap = new WrapCircleShape();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(float32 radius)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapCircleShape* wrap = new WrapCircleShape(radius);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(m_p)
-
-	CLASS_METHOD_DECLARE(ComputeMass)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->Inherit(WrapShape::GetFunctionTemplate());
+			function_template->SetClassName(NANX_SYMBOL("b2CircleShape"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, m_p)
+			NANX_METHOD_APPLY(prototype_template, ComputeMass)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			float32 radius = (info.Length() > 0) ? NANX_float32(info[0]) : 0.0f;
+			WrapCircleShape* wrap = new WrapCircleShape(radius);
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			v8::Local<v8::Value> argv[] = { info[0] };
+			info.GetReturnValue().Set(constructor->NewInstance(countof(argv), argv));
+		}
+	}
+	NANX_MEMBER_OBJECT(m_p) // m_wrap_m_p
+	NANX_METHOD(ComputeMass)
+	{
+		b2CircleShape* circle = Peek(info.This());		
+		b2MassData* mass_data = WrapMassData::Peek(info[0]);
+		float32 density = NANX_float32(info[1]);
+		circle->ComputeMass(mass_data, density);
+	}
 };
-
-Persistent<Function> WrapCircleShape::g_constructor;
-
-void WrapCircleShape::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplCircleShape = NanNew<FunctionTemplate>(New);
-	tplCircleShape->Inherit(NanNew<FunctionTemplate>(WrapShape::g_constructor_template));
-	tplCircleShape->SetClassName(NanNew<String>("b2CircleShape"));
-	tplCircleShape->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplCircleShape, m_p)
-	CLASS_METHOD_APPLY(tplCircleShape, ComputeMass);
-	NanAssignPersistent(g_constructor, tplCircleShape->GetFunction());
-	exports->Set(NanNew<String>("b2CircleShape"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapCircleShape::NewInstance(float32 radius)
-{
-	NanEscapableScope();
-	Local<Number> h_radius = NanNew<Number>(radius);
-	Handle<Value> argv[] = { h_radius };
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance(countof(argv), argv);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapCircleShape::New)
-{
-	NanScope();
-	float32 radius = (args.Length() > 0) ? (float32) args[0]->NumberValue() : 0.0f;
-	WrapCircleShape* that = new WrapCircleShape(radius);
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapCircleShape, m_circle, m_p) // m_circle_m_p
-
-CLASS_METHOD_IMPLEMENT(WrapCircleShape, ComputeMass,
-{
-	WrapMassData* wrap_mass_data = node::ObjectWrap::Unwrap<WrapMassData>(Local<Object>::Cast(args[0]));
-	float32 density = (float32) args[1]->NumberValue();
-	b2MassData mass_data;
-	that->m_circle.ComputeMass(&mass_data, density);
-	wrap_mass_data->SetMassData(mass_data);
-	NanReturnUndefined();
-})
 
 //// b2EdgeShape
 
 class WrapEdgeShape : public WrapShape
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2EdgeShape m_edge;
-	Persistent<Object> m_edge_m_vertex1; // m_edge.m_vertex1
-	Persistent<Object> m_edge_m_vertex2; // m_edge.m_vertex2
-	Persistent<Object> m_edge_m_vertex0; // m_edge.m_vertex0
-	Persistent<Object> m_edge_m_vertex3; // m_edge.m_vertex3
-
+	Nan::Persistent<v8::Object> m_wrap_m_vertex1; // m_edge.m_vertex1
+	Nan::Persistent<v8::Object> m_wrap_m_vertex2; // m_edge.m_vertex2
+	Nan::Persistent<v8::Object> m_wrap_m_vertex0; // m_edge.m_vertex0
+	Nan::Persistent<v8::Object> m_wrap_m_vertex3; // m_edge.m_vertex3
 private:
 	WrapEdgeShape()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_edge_m_vertex1, WrapVec2::NewInstance(m_edge.m_vertex1));
-		NanAssignPersistent(m_edge_m_vertex2, WrapVec2::NewInstance(m_edge.m_vertex2));
-		NanAssignPersistent(m_edge_m_vertex0, WrapVec2::NewInstance(m_edge.m_vertex0));
-		NanAssignPersistent(m_edge_m_vertex3, WrapVec2::NewInstance(m_edge.m_vertex3));
+		m_wrap_m_vertex1.Reset(WrapVec2::NewInstance(m_edge.m_vertex1));
+		m_wrap_m_vertex2.Reset(WrapVec2::NewInstance(m_edge.m_vertex2));
+		m_wrap_m_vertex0.Reset(WrapVec2::NewInstance(m_edge.m_vertex0));
+		m_wrap_m_vertex3.Reset(WrapVec2::NewInstance(m_edge.m_vertex3));
 	}
 	~WrapEdgeShape()
 	{
-		NanDisposePersistent(m_edge_m_vertex1);
-		NanDisposePersistent(m_edge_m_vertex2);
-		NanDisposePersistent(m_edge_m_vertex0);
-		NanDisposePersistent(m_edge_m_vertex3);
+		m_wrap_m_vertex1.Reset();
+		m_wrap_m_vertex2.Reset();
+		m_wrap_m_vertex0.Reset();
+		m_wrap_m_vertex3.Reset();
 	}
-
 public:
+	b2EdgeShape* Peek() { return &m_edge; }
+	virtual b2Shape& GetShape() { return m_edge; } // override WrapShape
 	virtual void SyncPull() // override WrapShape
 	{
 		// sync: pull data from javascript objects
-		m_edge.m_vertex1 = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex1))->GetVec2(); // struct copy
-		m_edge.m_vertex2 = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex2))->GetVec2(); // struct copy
-		m_edge.m_vertex0 = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex0))->GetVec2(); // struct copy
-		m_edge.m_vertex3 = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex3))->GetVec2(); // struct copy
+		m_edge.m_vertex1 = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex1))->GetVec2(); // struct copy
+		m_edge.m_vertex2 = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex2))->GetVec2(); // struct copy
+		m_edge.m_vertex0 = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex0))->GetVec2(); // struct copy
+		m_edge.m_vertex3 = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex3))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapShape
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex1))->SetVec2(m_edge.m_vertex1);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex2))->SetVec2(m_edge.m_vertex2);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex0))->SetVec2(m_edge.m_vertex0);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_edge_m_vertex3))->SetVec2(m_edge.m_vertex3);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex1))->SetVec2(m_edge.m_vertex1);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex2))->SetVec2(m_edge.m_vertex2);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex0))->SetVec2(m_edge.m_vertex0);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_vertex3))->SetVec2(m_edge.m_vertex3);
 	}
-
-	virtual b2Shape& GetShape() { return m_edge; } // override WrapShape
-
+public:
+	static WrapEdgeShape* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapEdgeShape* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapEdgeShape>(object); }
+	static b2EdgeShape* Peek(v8::Local<v8::Value> value) { WrapEdgeShape* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapEdgeShape* wrap = new WrapEdgeShape();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(m_vertex1)
-	CLASS_MEMBER_DECLARE(m_vertex2)
-	CLASS_MEMBER_DECLARE(m_vertex0)
-	CLASS_MEMBER_DECLARE(m_vertex3)
-	CLASS_MEMBER_DECLARE(m_hasVertex0)
-	CLASS_MEMBER_DECLARE(m_hasVertex3)
-
-	CLASS_METHOD_DECLARE(Set)
-	CLASS_METHOD_DECLARE(ComputeMass)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2EdgeShape"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, m_vertex1)
+			NANX_MEMBER_APPLY(prototype_template, m_vertex2)
+			NANX_MEMBER_APPLY(prototype_template, m_vertex0)
+			NANX_MEMBER_APPLY(prototype_template, m_vertex3)
+			NANX_METHOD_APPLY(prototype_template, Set)
+			NANX_METHOD_APPLY(prototype_template, ComputeMass)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapEdgeShape* wrap = new WrapEdgeShape();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(m_vertex1) // m_wrap_m_vertex1
+	NANX_MEMBER_OBJECT(m_vertex2) // m_wrap_m_vertex2
+	NANX_MEMBER_OBJECT(m_vertex0) // m_wrap_m_vertex0
+	NANX_MEMBER_OBJECT(m_vertex3) // m_wrap_m_vertex3
+	NANX_METHOD(Set)
+	{
+		WrapEdgeShape* wrap = Unwrap(info.This());
+		wrap->m_wrap_m_vertex1.Reset(v8::Local<v8::Object>::Cast(info[0]));
+		wrap->m_wrap_m_vertex2.Reset(v8::Local<v8::Object>::Cast(info[1]));
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(ComputeMass)
+	{
+		b2EdgeShape* edge = Peek(info.This());		
+		b2MassData* mass_data = WrapMassData::Peek(info[0]);
+		float32 density = NANX_float32(info[1]);
+		edge->ComputeMass(mass_data, density);
+	}
 };
-
-Persistent<Function> WrapEdgeShape::g_constructor;
-
-void WrapEdgeShape::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplEdgeShape = NanNew<FunctionTemplate>(New);
-	tplEdgeShape->Inherit(NanNew<FunctionTemplate>(WrapShape::g_constructor_template));
-	tplEdgeShape->SetClassName(NanNew<String>("b2EdgeShape"));
-	tplEdgeShape->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_vertex1)
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_vertex2)
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_vertex0)
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_vertex3)
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_hasVertex0)
-	CLASS_MEMBER_APPLY(tplEdgeShape, m_hasVertex3)
-	CLASS_METHOD_APPLY(tplEdgeShape, Set)
-	CLASS_METHOD_APPLY(tplEdgeShape, ComputeMass)
-	NanAssignPersistent(g_constructor, tplEdgeShape->GetFunction());
-	exports->Set(NanNew<String>("b2EdgeShape"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapEdgeShape::New)
-{
-	NanScope();
-	WrapEdgeShape* that = new WrapEdgeShape();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapEdgeShape, m_edge, m_vertex1) // m_edge_m_vertex1
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapEdgeShape, m_edge, m_vertex2) // m_edge_m_vertex2
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapEdgeShape, m_edge, m_vertex0) // m_edge_m_vertex0
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapEdgeShape, m_edge, m_vertex3) // m_edge_m_vertex3
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapEdgeShape, m_edge, bool, m_hasVertex0)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapEdgeShape, m_edge, bool, m_hasVertex3)
-
-CLASS_METHOD_IMPLEMENT(WrapEdgeShape, Set,
-{
-	NanAssignPersistent(that->m_edge_m_vertex1, Local<Object>::Cast(args[0]));
-	NanAssignPersistent(that->m_edge_m_vertex2, Local<Object>::Cast(args[1]));
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapEdgeShape, ComputeMass,
-{
-	WrapMassData* wrap_mass_data = node::ObjectWrap::Unwrap<WrapMassData>(Local<Object>::Cast(args[0]));
-	float32 density = (float32) args[1]->NumberValue();
-	b2MassData mass_data;
-	that->m_edge.ComputeMass(&mass_data, density);
-	wrap_mass_data->SetMassData(mass_data);
-	NanReturnUndefined();
-})
 
 //// b2PolygonShape
 
 class WrapPolygonShape : public WrapShape
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2PolygonShape m_polygon;
-
 private:
-	WrapPolygonShape() {}
-	~WrapPolygonShape() {}
-
+	WrapPolygonShape()
+	{
+	}
+	~WrapPolygonShape()
+	{
+	}
 public:
+	b2PolygonShape* Peek() { return &m_polygon; }
 	virtual b2Shape& GetShape() { return m_polygon; } // override WrapShape
-
+	virtual void SyncPull() // override WrapShape
+	{
+		// sync: pull data from javascript objects
+	}
+	virtual void SyncPush() // override WrapShape
+	{
+		// sync: push data into javascript objects
+	}
+public:
+	static WrapPolygonShape* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapPolygonShape* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapPolygonShape>(object); }
+	static b2PolygonShape* Peek(v8::Local<v8::Value> value) { WrapPolygonShape* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapPolygonShape* wrap = new WrapPolygonShape();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_METHOD_DECLARE(Set)
-	CLASS_METHOD_DECLARE(SetAsBox)
-	CLASS_METHOD_DECLARE(ComputeMass)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2PolygonShape"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, Set)
+			NANX_METHOD_APPLY(prototype_template, SetAsBox)
+			NANX_METHOD_APPLY(prototype_template, ComputeMass)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapPolygonShape* wrap = new WrapPolygonShape();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(Set)
+	{
+		WrapPolygonShape* wrap = Unwrap(info.This());
+		v8::Local<v8::Array> h_points = v8::Local<v8::Array>::Cast(info[0]);
+		int count = (info.Length() > 1)?(NANX_int(info[1])):(h_points->Length());
+		int start = (info.Length() > 2)?(NANX_int(info[2])):(0);
+		b2Vec2* points = new b2Vec2[count];
+		for (int i = 0; i < count; ++i)
+		{
+			points[i] = WrapVec2::Unwrap(h_points->Get(start + i).As<v8::Object>())->GetVec2(); // struct copy
+		}
+		wrap->m_polygon.Set(points, count);
+		delete[] points;
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SetAsBox)
+	{
+		WrapPolygonShape* wrap = Unwrap(info.This());
+		float32 hw = NANX_float32(info[0]);
+		float32 hh = NANX_float32(info[1]);
+		if (!info[2]->IsUndefined() && !info[3]->IsUndefined())
+		{
+			WrapVec2* center = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+			float32 angle = NANX_float32(info[3]);
+			wrap->m_polygon.SetAsBox(hw, hh, center->GetVec2(), angle);
+		}
+		else
+		{
+			wrap->m_polygon.SetAsBox(hw, hh);
+		}
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(ComputeMass)
+	{
+		b2PolygonShape* polygon = Peek(info.This());		
+		b2MassData* mass_data = WrapMassData::Peek(info[0]);
+		float32 density = NANX_float32(info[1]);
+		polygon->ComputeMass(mass_data, density);
+	}
 };
-
-Persistent<Function> WrapPolygonShape::g_constructor;
-
-void WrapPolygonShape::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplPolygonShape = NanNew<FunctionTemplate>(New);
-	tplPolygonShape->Inherit(NanNew<FunctionTemplate>(WrapShape::g_constructor_template));
-	tplPolygonShape->SetClassName(NanNew<String>("b2PolygonShape"));
-	tplPolygonShape->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplPolygonShape, Set)
-	CLASS_METHOD_APPLY(tplPolygonShape, SetAsBox)
-	CLASS_METHOD_APPLY(tplPolygonShape, ComputeMass)
-	NanAssignPersistent(g_constructor, tplPolygonShape->GetFunction());
-	exports->Set(NanNew<String>("b2PolygonShape"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapPolygonShape::New)
-{
-	NanScope();
-	WrapPolygonShape* that = new WrapPolygonShape();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapPolygonShape, Set,
-{
-	Local<Array> h_points = Local<Array>::Cast(args[0]);
-	int count = (args.Length() > 1)?(args[1]->Int32Value()):(h_points->Length());
-	int start = (args.Length() > 2)?(args[2]->Int32Value()):(0);
-	b2Vec2* points = new b2Vec2[count];
-	for (int i = 0; i < count; ++i)
-	{
-		points[i] = node::ObjectWrap::Unwrap<WrapVec2>(h_points->Get(start + i).As<Object>())->GetVec2(); // struct copy
-	}
-	that->m_polygon.Set(points, count);
-	delete[] points;
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPolygonShape, SetAsBox,
-{
-	float32 hw = (float32) args[0]->NumberValue();
-	float32 hh = (float32) args[1]->NumberValue();
-	if (!args[2]->IsUndefined() && !args[3]->IsUndefined())
-	{
-		WrapVec2* center = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-		float32 angle = (float32) args[3]->NumberValue();
-		that->m_polygon.SetAsBox(hw, hh, center->GetVec2(), angle);
-	}
-	else
-	{
-		that->m_polygon.SetAsBox(hw, hh);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPolygonShape, ComputeMass,
-{
-	WrapMassData* wrap_mass_data = node::ObjectWrap::Unwrap<WrapMassData>(Local<Object>::Cast(args[0]));
-	float32 density = (float32) args[1]->NumberValue();
-	b2MassData mass_data;
-	that->m_polygon.ComputeMass(&mass_data, density);
-	wrap_mass_data->SetMassData(mass_data);
-	NanReturnUndefined();
-})
 
 //// b2ChainShape
 
 class WrapChainShape : public WrapShape
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2ChainShape m_chain;
-	Persistent<Array> m_chain_m_vertices; // m_chain.m_vertices
-	Persistent<Object> m_chain_m_prevVertex; // m_chain.m_prevVertex
-	Persistent<Object> m_chain_m_nextVertex; // m_chain.m_nextVertex
-
+	Nan::Persistent<v8::Array> m_wrap_m_vertices; // m_chain.m_vertices
+	Nan::Persistent<v8::Object> m_wrap_m_prevVertex; // m_chain.m_prevVertex
+	Nan::Persistent<v8::Object> m_wrap_m_nextVertex; // m_chain.m_nextVertex
 private:
 	WrapChainShape()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_chain_m_prevVertex, WrapVec2::NewInstance(m_chain.m_prevVertex));
-		NanAssignPersistent(m_chain_m_nextVertex, WrapVec2::NewInstance(m_chain.m_nextVertex));
+		m_wrap_m_prevVertex.Reset(WrapVec2::NewInstance(m_chain.m_prevVertex));
+		m_wrap_m_nextVertex.Reset(WrapVec2::NewInstance(m_chain.m_nextVertex));
 	}
 	~WrapChainShape()
 	{
-		NanDisposePersistent(m_chain_m_vertices);
-		NanDisposePersistent(m_chain_m_prevVertex);
-		NanDisposePersistent(m_chain_m_nextVertex);
+		m_wrap_m_vertices.Reset();
+		m_wrap_m_prevVertex.Reset();
+		m_wrap_m_nextVertex.Reset();
 	}
-
 public:
+	b2ChainShape* Peek() { return &m_chain; }
+	virtual b2Shape& GetShape() { return m_chain; } // override WrapShape
 	virtual void SyncPull() // override WrapShape
 	{
 		// sync: pull data from javascript objects
-		if (!m_chain_m_vertices.IsEmpty())
+		if (!m_wrap_m_vertices.IsEmpty())
 		{
-			Handle<Array> vertices = NanNew<Array>(m_chain_m_vertices);
+			v8::Local<v8::Array> vertices = Nan::New<v8::Array>(m_wrap_m_vertices);
 			for (int32 i = 0; i < m_chain.m_count; ++i)
 			{
-				m_chain.m_vertices[i] = node::ObjectWrap::Unwrap<WrapVec2>(vertices->Get(i).As<Object>())->GetVec2(); // struct copy
+				m_chain.m_vertices[i] = WrapVec2::Unwrap(vertices->Get(i).As<v8::Object>())->GetVec2(); // struct copy
 			}
 		}
-		m_chain.m_prevVertex = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_chain_m_prevVertex))->GetVec2(); // struct copy
-		m_chain.m_nextVertex = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_chain_m_nextVertex))->GetVec2(); // struct copy
+		m_chain.m_prevVertex = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_prevVertex))->GetVec2(); // struct copy
+		m_chain.m_nextVertex = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_nextVertex))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapShape
 	{
 		// sync: push data into javascript objects
-		if (m_chain_m_vertices.IsEmpty())
+		if (m_wrap_m_vertices.IsEmpty())
 		{
-			NanAssignPersistent(m_chain_m_vertices, NanNew<Array>(m_chain.m_count));
+			m_wrap_m_vertices.Reset(Nan::New<v8::Array>(m_chain.m_count));
 		}
-		Handle<Array> vertices = NanNew<Array>(m_chain_m_vertices);
+		v8::Local<v8::Array> vertices = Nan::New<v8::Array>(m_wrap_m_vertices);
 		for (int32 i = 0; i < m_chain.m_count; ++i)
 		{
 			vertices->Set(i, WrapVec2::NewInstance(m_chain.m_vertices[i]));
 		}
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_chain_m_prevVertex))->SetVec2(m_chain.m_prevVertex);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_chain_m_nextVertex))->SetVec2(m_chain.m_nextVertex);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_prevVertex))->SetVec2(m_chain.m_prevVertex);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_m_nextVertex))->SetVec2(m_chain.m_nextVertex);
 	}
-
-	virtual b2Shape& GetShape() { return m_chain; } // override WrapShape
-
+public:
+	static WrapChainShape* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapChainShape* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapChainShape>(object); }
+	static b2ChainShape* Peek(v8::Local<v8::Value> value) { WrapChainShape* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapChainShape* wrap = new WrapChainShape();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(m_vertices)
-	CLASS_MEMBER_DECLARE(m_count)
-	CLASS_MEMBER_DECLARE(m_prevVertex)
-	CLASS_MEMBER_DECLARE(m_nextVertex)
-	CLASS_MEMBER_DECLARE(m_hasPrevVertex)
-	CLASS_MEMBER_DECLARE(m_hasNextVertex)
-	CLASS_METHOD_DECLARE(CreateLoop)
-	CLASS_METHOD_DECLARE(CreateChain)
-	CLASS_METHOD_DECLARE(SetPrevVertex)
-	CLASS_METHOD_DECLARE(SetNextVertex)
-	CLASS_METHOD_DECLARE(ComputeMass)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2ChainShape"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, m_vertices)
+			NANX_MEMBER_APPLY(prototype_template, m_count)
+			NANX_MEMBER_APPLY(prototype_template, m_prevVertex)
+			NANX_MEMBER_APPLY(prototype_template, m_nextVertex)
+			NANX_MEMBER_APPLY(prototype_template, m_hasPrevVertex)
+			NANX_MEMBER_APPLY(prototype_template, m_hasNextVertex)
+			NANX_METHOD_APPLY(prototype_template, CreateLoop)
+			NANX_METHOD_APPLY(prototype_template, CreateChain)
+			NANX_METHOD_APPLY(prototype_template, SetPrevVertex)
+			NANX_METHOD_APPLY(prototype_template, SetNextVertex)
+			NANX_METHOD_APPLY(prototype_template, ComputeMass)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapChainShape* wrap = new WrapChainShape();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_ARRAY(m_vertices) // m_wrap_m_vertices
+	NANX_MEMBER_INTEGER(int32, m_count)
+	NANX_MEMBER_OBJECT(m_prevVertex) // m_wrap_m_prevVertex
+	NANX_MEMBER_OBJECT(m_nextVertex) // m_wrap_m_nextVertex
+	NANX_MEMBER_BOOLEAN(bool, m_hasPrevVertex)
+	NANX_MEMBER_BOOLEAN(bool, m_hasNextVertex)
+	NANX_METHOD(CreateLoop)
+	{
+		WrapChainShape* wrap = Unwrap(info.This());
+		v8::Local<v8::Array> h_vertices = v8::Local<v8::Array>::Cast(info[0]);
+		int count = (info.Length() > 1)?(NANX_int(info[1])):(h_vertices->Length());
+		b2Vec2* vertices = new b2Vec2[count];
+		for (int i = 0; i < count; ++i)
+		{
+			vertices[i] = WrapVec2::Unwrap(h_vertices->Get(i).As<v8::Object>())->GetVec2(); // struct copy
+		}
+		wrap->m_chain.CreateLoop(vertices, count);
+		delete[] vertices;
+		wrap->SyncPush();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(CreateChain)
+	{
+		WrapChainShape* wrap = Unwrap(info.This());
+		v8::Local<v8::Array> h_vertices = v8::Local<v8::Array>::Cast(info[0]);
+		int count = (info.Length() > 1)?(NANX_int(info[1])):(h_vertices->Length());
+		b2Vec2* vertices = new b2Vec2[count];
+		for (int i = 0; i < count; ++i)
+		{
+			vertices[i] = WrapVec2::Unwrap(h_vertices->Get(i).As<v8::Object>())->GetVec2(); // struct copy
+		}
+		wrap->m_chain.CreateChain(vertices, count);
+		delete[] vertices;
+		wrap->SyncPush();
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(SetPrevVertex)
+	{
+		b2ChainShape* chain = Peek(info.This());
+		b2Vec2* vertex = WrapVec2::Peek(info[0]);
+		chain->SetPrevVertex(*vertex);
+	}
+	NANX_METHOD(SetNextVertex)
+	{
+		b2ChainShape* chain = Peek(info.This());
+		b2Vec2* vertex = WrapVec2::Peek(info[0]);
+		chain->SetNextVertex(*vertex);
+	}
+	NANX_METHOD(ComputeMass)
+	{
+		b2ChainShape* chain = Peek(info.This());		
+		b2MassData* mass_data = WrapMassData::Peek(info[0]);
+		float32 density = NANX_float32(info[1]);
+		chain->ComputeMass(mass_data, density);
+	}
 };
-
-Persistent<Function> WrapChainShape::g_constructor;
-
-void WrapChainShape::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplChainShape = NanNew<FunctionTemplate>(New);
-	tplChainShape->Inherit(NanNew<FunctionTemplate>(WrapShape::g_constructor_template));
-	tplChainShape->SetClassName(NanNew<String>("b2ChainShape"));
-	tplChainShape->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplChainShape, m_vertices)
-	CLASS_MEMBER_APPLY(tplChainShape, m_count)
-	CLASS_MEMBER_APPLY(tplChainShape, m_prevVertex)
-	CLASS_MEMBER_APPLY(tplChainShape, m_nextVertex)
-	CLASS_MEMBER_APPLY(tplChainShape, m_hasPrevVertex)
-	CLASS_MEMBER_APPLY(tplChainShape, m_hasNextVertex)
-	CLASS_METHOD_APPLY(tplChainShape, CreateLoop)
-	CLASS_METHOD_APPLY(tplChainShape, CreateChain)
-	CLASS_METHOD_APPLY(tplChainShape, SetPrevVertex)
-	CLASS_METHOD_APPLY(tplChainShape, SetNextVertex)
-	CLASS_METHOD_APPLY(tplChainShape, ComputeMass)
-	NanAssignPersistent(g_constructor, tplChainShape->GetFunction());
-	exports->Set(NanNew<String>("b2ChainShape"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapChainShape::New)
-{
-	NanScope();
-	WrapChainShape* that = new WrapChainShape();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapChainShape, m_chain, m_vertices) // m_chain_m_vertices
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapChainShape, m_chain, int32, m_count)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapChainShape, m_chain, m_prevVertex) // m_chain_m_prevVertex
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapChainShape, m_chain, m_nextVertex) // m_chain_m_nextVertex
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapChainShape, m_chain, bool, m_hasPrevVertex)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapChainShape, m_chain, bool, m_hasNextVertex)
-
-CLASS_METHOD_IMPLEMENT(WrapChainShape, CreateLoop,
-{
-	Local<Array> h_vertices = Local<Array>::Cast(args[0]);
-	int count = (args.Length() > 1)?(args[1]->Int32Value()):(h_vertices->Length());
-	b2Vec2* vertices = new b2Vec2[count];
-	for (int i = 0; i < count; ++i)
-	{
-		vertices[i] = node::ObjectWrap::Unwrap<WrapVec2>(h_vertices->Get(i).As<Object>())->GetVec2(); // struct copy
-	}
-	that->m_chain.CreateLoop(vertices, count);
-	delete[] vertices;
-	that->SyncPush();
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapChainShape, CreateChain,
-{
-	Local<Array> h_vertices = Local<Array>::Cast(args[0]);
-	int count = (args.Length() > 1)?(args[1]->Int32Value()):(h_vertices->Length());
-	b2Vec2* vertices = new b2Vec2[count];
-	for (int i = 0; i < count; ++i)
-	{
-		vertices[i] = node::ObjectWrap::Unwrap<WrapVec2>(h_vertices->Get(i).As<Object>())->GetVec2(); // struct copy
-	}
-	that->m_chain.CreateChain(vertices, count);
-	delete[] vertices;
-	that->SyncPush();
-	NanReturnValue(args.This());
-})
-
-CLASS_METHOD_IMPLEMENT(WrapChainShape, SetPrevVertex,
-{
-	that->m_chain.SetPrevVertex(node::ObjectWrap::Unwrap<WrapVec2>(args[0].As<Object>())->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapChainShape, SetNextVertex,
-{
-	that->m_chain.SetNextVertex(node::ObjectWrap::Unwrap<WrapVec2>(args[0].As<Object>())->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapChainShape, ComputeMass,
-{
-	WrapMassData* wrap_mass_data = node::ObjectWrap::Unwrap<WrapMassData>(Local<Object>::Cast(args[0]));
-	float32 density = (float32) args[1]->NumberValue();
-	b2MassData mass_data;
-	that->m_chain.ComputeMass(&mass_data, density);
-	wrap_mass_data->SetMassData(mass_data);
-	NanReturnUndefined();
-})
 
 //// b2Filter
 
-class WrapFilter : public node::ObjectWrap
+class WrapFilter : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Filter& o);
-
 public:
 	b2Filter m_filter;
-
 private:
 	WrapFilter() {}
 	~WrapFilter() {}
-
 public:
+	b2Filter* Peek() { return &m_filter; }
 	const b2Filter& GetFilter() const { return m_filter; }
 	void SetFilter(const b2Filter& filter) { m_filter = filter; } // struct copy
-
+public:
+	static WrapFilter* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapFilter* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapFilter>(object); }
+	static b2Filter* Peek(v8::Local<v8::Value> value) { WrapFilter* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapFilter* wrap = new WrapFilter();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Filter& o)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapFilter* wrap = new WrapFilter();
+		wrap->Wrap(instance);
+		wrap->SetFilter(o);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(categoryBits)
-	CLASS_MEMBER_DECLARE(maskBits)
-	CLASS_MEMBER_DECLARE(groupIndex)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Filter"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, categoryBits)
+			NANX_MEMBER_APPLY(prototype_template, maskBits)
+			NANX_MEMBER_APPLY(prototype_template, groupIndex)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		WrapFilter* wrap = new WrapFilter();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_MEMBER_UINT32(uint16, categoryBits)
+	NANX_MEMBER_UINT32(uint16, maskBits)
+	NANX_MEMBER_INT32(int16, groupIndex)
 };
-
-Persistent<Function> WrapFilter::g_constructor;
-
-void WrapFilter::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplFilter = NanNew<FunctionTemplate>(New);
-	tplFilter->SetClassName(NanNew<String>("b2Filter"));
-	tplFilter->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplFilter, categoryBits)
-	CLASS_MEMBER_APPLY(tplFilter, maskBits)
-	CLASS_MEMBER_APPLY(tplFilter, groupIndex)
-	NanAssignPersistent(g_constructor, tplFilter->GetFunction());
-	exports->Set(NanNew<String>("b2Filter"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapFilter::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapFilter::NewInstance(const b2Filter& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapFilter* that = node::ObjectWrap::Unwrap<WrapFilter>(instance);
-	that->SetFilter(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapFilter::New)
-{
-	NanScope();
-	WrapFilter* that = new WrapFilter();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapFilter, m_filter, uint16, categoryBits)
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapFilter, m_filter, uint16, maskBits)
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapFilter, m_filter, int16, groupIndex)
 
 //// b2FixtureDef
 
-class WrapFixtureDef : public node::ObjectWrap
+class WrapFixtureDef : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2FixtureDef m_fd;
-	Persistent<Object> m_fd_shape;		// m_fd.shape
-	Persistent<Value> m_fd_userData;	// m_fd.userData
-	Persistent<Object> m_fd_filter;		// m_fd.filter
-
+	Nan::Persistent<v8::Object> m_wrap_shape;		// m_fd.shape
+	Nan::Persistent<v8::Value> m_wrap_userData;	// m_fd.userData
+	Nan::Persistent<v8::Object> m_wrap_filter;	// m_fd.filter
 private:
 	WrapFixtureDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_fd_filter, WrapFilter::NewInstance());
+		m_wrap_filter.Reset(WrapFilter::NewInstance());
 	}
 	~WrapFixtureDef()
 	{
-		NanDisposePersistent(m_fd_shape);
-		NanDisposePersistent(m_fd_userData);
-		NanDisposePersistent(m_fd_filter);
+		m_wrap_shape.Reset();
+		m_wrap_userData.Reset();
+		m_wrap_filter.Reset();
 	}
-
+public:
+	b2FixtureDef* Peek() { SyncPull(); return &m_fd; } // TODO: is SyncPull necessary?
+	b2FixtureDef& GetFixtureDef() { return m_fd; }
+	const b2FixtureDef& UseFixtureDef() { SyncPull(); return GetFixtureDef(); }
+	v8::Local<v8::Object> GetShapeHandle() { return Nan::New<v8::Object>(m_wrap_shape); }
+	v8::Local<v8::Value> GetUserDataHandle() { return Nan::New<v8::Value>(m_wrap_userData); }
 public:
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		m_fd.filter = node::ObjectWrap::Unwrap<WrapFilter>(NanNew<Object>(m_fd_filter))->GetFilter(); // struct copy
-		if (!m_fd_shape.IsEmpty())
+		m_fd.filter = WrapFilter::Unwrap(Nan::New<v8::Object>(m_wrap_filter))->GetFilter(); // struct copy
+		if (!m_wrap_shape.IsEmpty())
 		{
-			WrapShape* wrap_shape = node::ObjectWrap::Unwrap<WrapShape>(NanNew<Object>(m_fd_shape));
+			WrapShape* wrap_shape = WrapShape::Unwrap(Nan::New<v8::Object>(m_wrap_shape));
 			m_fd.shape = &wrap_shape->UseShape();
 		}
 		else
@@ -1527,1010 +1606,913 @@ public:
 		}
 		//m_fd.userData; // not used
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapFilter>(NanNew<Object>(m_fd_filter))->SetFilter(m_fd.filter);
+		//WrapFilter::Unwrap(Nan::New<v8::Object>(m_wrap_filter))->SetFilter(m_fd.filter);
 		if (m_fd.shape)
 		{
-			// TODO: NanAssignPersistent(m_fd_shape, NanObjectWrapHandle(WrapShape::GetWrap(m_fd.shape)));
+			// TODO: m_wrap_shape.Reset(WrapShape::GetWrap(m_fd.shape)->handle());
 		}
 		else
 		{
-			NanDisposePersistent(m_fd_shape);
+			// TODO: m_wrap_shape.Reset();
 		}
 		//m_fd.userData; // not used
 	}
-
-	b2FixtureDef& GetFixtureDef() { return m_fd; }
-
-	const b2FixtureDef& UseFixtureDef() { SyncPull(); return GetFixtureDef(); }
-
-	Handle<Object> GetShapeHandle() { return NanNew<Object>(m_fd_shape); }
-	Handle<Value> GetUserDataHandle() { return NanNew<Value>(m_fd_userData); }
-
+public:
+	static WrapFixtureDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapFixtureDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapFixtureDef>(object); }
+	static b2FixtureDef* Peek(v8::Local<v8::Value> value) { WrapFixtureDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(shape)
-	CLASS_MEMBER_DECLARE(userData)
-	CLASS_MEMBER_DECLARE(friction)
-	CLASS_MEMBER_DECLARE(restitution)
-	CLASS_MEMBER_DECLARE(density)
-	CLASS_MEMBER_DECLARE(isSensor)
-	CLASS_MEMBER_DECLARE(filter)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2FixtureDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, shape)
+			NANX_MEMBER_APPLY(prototype_template, userData)
+			NANX_MEMBER_APPLY(prototype_template, friction)
+			NANX_MEMBER_APPLY(prototype_template, restitution)
+			NANX_MEMBER_APPLY(prototype_template, density)
+			NANX_MEMBER_APPLY(prototype_template, isSensor)
+			NANX_MEMBER_APPLY(prototype_template, filter)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapFixtureDef* wrap = new WrapFixtureDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT	(shape) // m_wrap_shape
+	NANX_MEMBER_VALUE	(userData) // m_wrap_userData
+	NANX_MEMBER_NUMBER	(float32, friction)
+	NANX_MEMBER_NUMBER	(float32, restitution)
+	NANX_MEMBER_NUMBER	(float32, density)
+	NANX_MEMBER_BOOLEAN	(bool, isSensor)
+	NANX_MEMBER_OBJECT	(filter) // m_wrap_filter
 };
-
-Persistent<Function> WrapFixtureDef::g_constructor;
-
-void WrapFixtureDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplFixtureDef = NanNew<FunctionTemplate>(New);
-	tplFixtureDef->SetClassName(NanNew<String>("b2FixtureDef"));
-	tplFixtureDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplFixtureDef, shape)
-	CLASS_MEMBER_APPLY(tplFixtureDef, userData)
-	CLASS_MEMBER_APPLY(tplFixtureDef, friction)
-	CLASS_MEMBER_APPLY(tplFixtureDef, restitution)
-	CLASS_MEMBER_APPLY(tplFixtureDef, density)
-	CLASS_MEMBER_APPLY(tplFixtureDef, isSensor)
-	CLASS_MEMBER_APPLY(tplFixtureDef, filter)
-	NanAssignPersistent(g_constructor, tplFixtureDef->GetFunction());
-	exports->Set(NanNew<String>("b2FixtureDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapFixtureDef::New)
-{
-	NanScope();
-	WrapFixtureDef* that = new WrapFixtureDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapFixtureDef, m_fd, shape				) // m_fd_shape
-CLASS_MEMBER_IMPLEMENT_VALUE	(WrapFixtureDef, m_fd, userData				) // m_fd_userData
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapFixtureDef, m_fd, float32, friction	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapFixtureDef, m_fd, float32, restitution	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapFixtureDef, m_fd, float32, density		)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapFixtureDef, m_fd, bool, isSensor		)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapFixtureDef, m_fd, filter				) // m_fd_filter
 
 //// b2Fixture
 
-class WrapFixture : public node::ObjectWrap
+class WrapFixture : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-	static WrapFixture* GetWrap(const b2Fixture* fixture)
-	{
-		return (WrapFixture*) fixture->GetUserData();
-	}
-
-	static void SetWrap(b2Fixture* fixture, WrapFixture* wrap)
-	{
-		fixture->SetUserData(wrap);
-	}
-
-private:
 	b2Fixture* m_fixture;
-	Persistent<Object> m_fixture_body;
-	Persistent<Object> m_fixture_shape;
-	Persistent<Value> m_fixture_userData;
-
+	Nan::Persistent<v8::Object> m_fixture_body;
+	Nan::Persistent<v8::Object> m_fixture_shape;
+	Nan::Persistent<v8::Value> m_fixture_userData;
 private:
-	WrapFixture() :
-		m_fixture(NULL)
+	WrapFixture() : m_fixture(NULL)
 	{
-		// create javascript objects
 	}
 	~WrapFixture()
 	{
-		NanDisposePersistent(m_fixture_body);
-		NanDisposePersistent(m_fixture_shape);
-		NanDisposePersistent(m_fixture_userData);
+		m_fixture_body.Reset();
+		m_fixture_shape.Reset();
+		m_fixture_userData.Reset();
 	}
-
 public:
-	b2Fixture* GetFixture() { return m_fixture; }
-
-	void SetupObject(Handle<Object> h_body, WrapFixtureDef* wrap_fd, b2Fixture* fixture)
+	b2Fixture* Peek() { return m_fixture; }
+public:
+	void SetupObject(v8::Local<v8::Object> h_body, WrapFixtureDef* wrap_fd, b2Fixture* fixture)
 	{
 		m_fixture = fixture;
-
 		// set fixture internal data
 		WrapFixture::SetWrap(m_fixture, this);
 		// set reference to this fixture (prevent GC)
 		Ref();
-
 		// set reference to body object
-		NanAssignPersistent(m_fixture_body, h_body);
+		m_fixture_body.Reset(h_body);
 		// set reference to shape object
-		NanAssignPersistent(m_fixture_shape, wrap_fd->GetShapeHandle());
+		m_fixture_shape.Reset(wrap_fd->GetShapeHandle());
 		// set reference to user data object
-		NanAssignPersistent(m_fixture_userData, wrap_fd->GetUserDataHandle());
+		m_fixture_userData.Reset(wrap_fd->GetUserDataHandle());
 	}
-
 	b2Fixture* ResetObject()
 	{
 		// clear reference to body object
-		NanDisposePersistent(m_fixture_body);
+		m_fixture_body.Reset();
 		// clear reference to shape object
-		NanDisposePersistent(m_fixture_shape);
+		m_fixture_shape.Reset();
 		// clear reference to user data object
-		NanDisposePersistent(m_fixture_userData);
-
+		m_fixture_userData.Reset();
 		// clear reference to this fixture (allow GC)
 		Unref();
 		// clear fixture internal data
 		WrapFixture::SetWrap(m_fixture, NULL);
-
 		b2Fixture* fixture = m_fixture;
 		m_fixture = NULL;
 		return fixture;
 	}
-
+public:
+	static WrapFixture* GetWrap(const b2Fixture* fixture)
+	{
+		return static_cast<WrapFixture*>(fixture->GetUserData());
+	}
+	static void SetWrap(b2Fixture* fixture, WrapFixture* wrap)
+	{
+		fixture->SetUserData(wrap);
+	}
+public:
+	static WrapFixture* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapFixture* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapFixture>(object); }
+	static b2Fixture* Peek(v8::Local<v8::Value> value) { WrapFixture* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapFixture* wrap = new WrapFixture();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_METHOD_DECLARE(GetType)
-	CLASS_METHOD_DECLARE(GetShape)
-	CLASS_METHOD_DECLARE(SetSensor)
-	CLASS_METHOD_DECLARE(IsSensor)
-	CLASS_METHOD_DECLARE(SetFilterData)
-	CLASS_METHOD_DECLARE(GetFilterData)
-	CLASS_METHOD_DECLARE(Refilter)
-	CLASS_METHOD_DECLARE(GetBody)
-	CLASS_METHOD_DECLARE(GetNext)
-	CLASS_METHOD_DECLARE(GetUserData)
-	CLASS_METHOD_DECLARE(SetUserData)
-	CLASS_METHOD_DECLARE(TestPoint) //bool TestPoint(const b2Vec2& p) const;
-//	bool RayCast(b2RayCastOutput* output, const b2RayCastInput& input, int32 childIndex) const;
-//	void GetMassData(b2MassData* massData) const;
-	CLASS_METHOD_DECLARE(GetDensity)
-	CLASS_METHOD_DECLARE(SetDensity)
-	CLASS_METHOD_DECLARE(GetFriction)
-	CLASS_METHOD_DECLARE(SetFriction)
-	CLASS_METHOD_DECLARE(GetRestitution)
-	CLASS_METHOD_DECLARE(SetRestitution)
-	CLASS_METHOD_DECLARE(GetAABB)
-///	void Dump(int32 bodyIndex);
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Fixture"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetType)
+			NANX_METHOD_APPLY(prototype_template, GetShape)
+			NANX_METHOD_APPLY(prototype_template, SetSensor)
+			NANX_METHOD_APPLY(prototype_template, IsSensor)
+			NANX_METHOD_APPLY(prototype_template, SetFilterData)
+			NANX_METHOD_APPLY(prototype_template, GetFilterData)
+			NANX_METHOD_APPLY(prototype_template, Refilter)
+			NANX_METHOD_APPLY(prototype_template, GetBody)
+			NANX_METHOD_APPLY(prototype_template, GetNext)
+			NANX_METHOD_APPLY(prototype_template, GetUserData)
+			NANX_METHOD_APPLY(prototype_template, SetUserData)
+			NANX_METHOD_APPLY(prototype_template, TestPoint)
+			NANX_METHOD_APPLY(prototype_template, GetDensity)
+			NANX_METHOD_APPLY(prototype_template, SetDensity)
+			NANX_METHOD_APPLY(prototype_template, GetFriction)
+			NANX_METHOD_APPLY(prototype_template, SetFriction)
+			NANX_METHOD_APPLY(prototype_template, GetRestitution)
+			NANX_METHOD_APPLY(prototype_template, SetRestitution)
+			NANX_METHOD_APPLY(prototype_template, GetAABB)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapFixture* wrap = new WrapFixture();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(GetType)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->GetType()));
+	}
+	NANX_METHOD(GetShape)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture_shape));
+	}
+	NANX_METHOD(SetSensor)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		wrap->m_fixture->SetSensor(NANX_bool(info[0]));
+	}
+	NANX_METHOD(IsSensor)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->IsSensor()));
+	}
+	NANX_METHOD(SetFilterData)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		WrapFilter* wrap_filter = WrapFilter::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		wrap->m_fixture->SetFilterData(wrap_filter->GetFilter());
+	}
+	NANX_METHOD(GetFilterData)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(WrapFilter::NewInstance(wrap->m_fixture->GetFilterData()));
+	}
+	NANX_METHOD(Refilter)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		wrap->m_fixture->Refilter();
+	}
+	NANX_METHOD(GetBody)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture_body));
+	}
+	NANX_METHOD(GetNext)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		b2Fixture* fixture = wrap->m_fixture->GetNext();
+		if (fixture)
+		{
+			// get fixture internal data
+			WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+			info.GetReturnValue().Set(wrap_fixture->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetUserData)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		if (!wrap->m_fixture_userData.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Value>(wrap->m_fixture_userData));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(SetUserData)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		if (!info[0]->IsNull())
+		{
+			wrap->m_fixture_userData.Reset(info[0]);
+		}
+		else
+		{
+			wrap->m_fixture_userData.Reset();
+		}
+	}
+	NANX_METHOD(TestPoint)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		WrapVec2* p = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->TestPoint(p->GetVec2())));
+	}
+	//bool RayCast(b2RayCastOutput* output, const b2RayCastInput& input, int32 childIndex) const;
+	//void GetMassData(b2MassData* massData) const;
+	NANX_METHOD(GetDensity)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->GetDensity()));
+	}
+	NANX_METHOD(SetDensity)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		wrap->m_fixture->SetDensity(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetFriction)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->GetFriction()));
+	}
+	NANX_METHOD(SetFriction)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		wrap->m_fixture->SetFriction(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetRestitution)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_fixture->GetRestitution()));
+	}
+	NANX_METHOD(SetRestitution)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		wrap->m_fixture->SetRestitution(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetAABB)
+	{
+		WrapFixture* wrap = Unwrap(info.This());
+		int32 childIndex = NANX_int32(info[0]);
+		info.GetReturnValue().Set(WrapAABB::NewInstance(wrap->m_fixture->GetAABB(childIndex)));
+	}
+	///	void Dump(int32 bodyIndex);
 };
-
-Persistent<Function> WrapFixture::g_constructor;
-
-void WrapFixture::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplFixture = NanNew<FunctionTemplate>(New);
-	tplFixture->SetClassName(NanNew<String>("b2Fixture"));
-	tplFixture->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplFixture, GetType)
-	CLASS_METHOD_APPLY(tplFixture, GetShape)
-	CLASS_METHOD_APPLY(tplFixture, SetSensor)
-	CLASS_METHOD_APPLY(tplFixture, IsSensor)
-	CLASS_METHOD_APPLY(tplFixture, SetFilterData)
-	CLASS_METHOD_APPLY(tplFixture, GetFilterData)
-	CLASS_METHOD_APPLY(tplFixture, Refilter)
-	CLASS_METHOD_APPLY(tplFixture, GetBody)
-	CLASS_METHOD_APPLY(tplFixture, GetNext)
-	CLASS_METHOD_APPLY(tplFixture, GetUserData)
-	CLASS_METHOD_APPLY(tplFixture, SetUserData)
-	CLASS_METHOD_APPLY(tplFixture, TestPoint)
-	CLASS_METHOD_APPLY(tplFixture, GetDensity)
-	CLASS_METHOD_APPLY(tplFixture, SetDensity)
-	CLASS_METHOD_APPLY(tplFixture, GetFriction)
-	CLASS_METHOD_APPLY(tplFixture, SetFriction)
-	CLASS_METHOD_APPLY(tplFixture, GetRestitution)
-	CLASS_METHOD_APPLY(tplFixture, SetRestitution)
-	CLASS_METHOD_APPLY(tplFixture, GetAABB)
-	NanAssignPersistent(g_constructor, tplFixture->GetFunction());
-	exports->Set(NanNew<String>("b2Fixture"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapFixture::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapFixture::New)
-{
-	NanScope();
-	WrapFixture* that = new WrapFixture();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetType,
-{
-	NanReturnValue(NanNew<Integer>(that->m_fixture->GetType()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetShape,
-{
-	NanReturnValue(NanNew(that->m_fixture_shape));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetSensor,
-{
-	that->m_fixture->SetSensor(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, IsSensor,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_fixture->IsSensor()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetFilterData,
-{
-	WrapFilter* wrap_filter = node::ObjectWrap::Unwrap<WrapFilter>(Local<Object>::Cast(args[0]));
-	that->m_fixture->SetFilterData(wrap_filter->GetFilter());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetFilterData,
-{
-	NanReturnValue(WrapFilter::NewInstance(that->m_fixture->GetFilterData()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, Refilter,
-{
-	that->m_fixture->Refilter();
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetBody,
-{
-	NanReturnValue(NanNew(that->m_fixture_body));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetNext,
-{
-	b2Fixture* fixture = that->m_fixture->GetNext();
-	if (fixture)
-	{
-		// get fixture internal data
-		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-		NanReturnValue(NanObjectWrapHandle(wrap_fixture));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetUserData,
-{
-	if (!that->m_fixture_userData.IsEmpty())
-	{
-		NanReturnValue(NanNew<Value>(that->m_fixture_userData));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetUserData,
-{
-	if (!args[0]->IsNull())
-	{
-		NanAssignPersistent(that->m_fixture_userData, args[0]);
-	}
-	else
-	{
-		NanDisposePersistent(that->m_fixture_userData);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, TestPoint,
-{
-	WrapVec2* p = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	NanReturnValue(NanNew<Boolean>(that->m_fixture->TestPoint(p->GetVec2())));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetDensity,
-{
-	NanReturnValue(NanNew<Number>(that->m_fixture->GetDensity()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetDensity,
-{
-	that->m_fixture->SetDensity((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetFriction,
-{
-	NanReturnValue(NanNew<Number>(that->m_fixture->GetFriction()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetFriction,
-{
-	that->m_fixture->SetFriction((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetRestitution,
-{
-	NanReturnValue(NanNew<Number>(that->m_fixture->GetRestitution()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, SetRestitution,
-{
-	that->m_fixture->SetRestitution((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFixture, GetAABB,
-{
-	int32 childIndex = args[0]->Int32Value();
-	NanReturnValue(WrapAABB::NewInstance(that->m_fixture->GetAABB(childIndex)));
-})
 
 //// b2BodyDef
 
-class WrapBodyDef : public node::ObjectWrap
+class WrapBodyDef : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2BodyDef m_bd;
-	Persistent<Object> m_bd_position;		// m_bd.position
-	Persistent<Object> m_bd_linearVelocity;	// m_bd.linearVelocity
-	Persistent<Value> m_bd_userData;		// m_bd.userData
-
+	Nan::Persistent<v8::Object> m_wrap_position;			// m_bd.position
+	Nan::Persistent<v8::Object> m_wrap_linearVelocity;	// m_bd.linearVelocity
+	Nan::Persistent<v8::Value> m_wrap_userData;			// m_bd.userData
 private:
 	WrapBodyDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_bd_position, WrapVec2::NewInstance(m_bd.position));
-		NanAssignPersistent(m_bd_linearVelocity, WrapVec2::NewInstance(m_bd.linearVelocity));
+		m_wrap_position.Reset(WrapVec2::NewInstance(m_bd.position));
+		m_wrap_linearVelocity.Reset(WrapVec2::NewInstance(m_bd.linearVelocity));
 	}
 	~WrapBodyDef()
 	{
-		NanDisposePersistent(m_bd_position);
-		NanDisposePersistent(m_bd_linearVelocity);
-		NanDisposePersistent(m_bd_userData);
+		m_wrap_position.Reset();
+		m_wrap_linearVelocity.Reset();
+		m_wrap_userData.Reset();
 	}
-
+public:
+	b2BodyDef* Peek() { SyncPull(); return &m_bd; } // TODO: is SyncPull necessary
+	b2BodyDef& GetBodyDef() { return m_bd; }
+	const b2BodyDef& UseBodyDef() { SyncPull(); return GetBodyDef(); }
+	v8::Local<v8::Value> GetUserDataHandle() { return Nan::New<v8::Value>(m_wrap_userData); }
 public:
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		m_bd.position = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_bd_position))->GetVec2(); // struct copy
-		m_bd.linearVelocity = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_bd_linearVelocity))->GetVec2(); // struct copy
+		m_bd.position = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->GetVec2(); // struct copy
+		m_bd.linearVelocity = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearVelocity))->GetVec2(); // struct copy
 		//m_bd.userData; // not used
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_bd_position))->SetVec2(m_bd.position);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_bd_linearVelocity))->SetVec2(m_bd.linearVelocity);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->SetVec2(m_bd.position);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearVelocity))->SetVec2(m_bd.linearVelocity);
 		//m_bd.userData; // not used
 	}
-
-	b2BodyDef& GetBodyDef() { return m_bd; }
-
-	const b2BodyDef& UseBodyDef() { SyncPull(); return GetBodyDef(); }
-
-	Handle<Value> GetUserDataHandle() { return NanNew<Value>(m_bd_userData); }
-
+public:
+	static WrapBodyDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapBodyDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapBodyDef>(object); }
+	static b2BodyDef* Peek(v8::Local<v8::Value> value) { WrapBodyDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(type)
-	CLASS_MEMBER_DECLARE(position)
-	CLASS_MEMBER_DECLARE(angle)
-	CLASS_MEMBER_DECLARE(linearVelocity)
-	CLASS_MEMBER_DECLARE(angularVelocity)
-	CLASS_MEMBER_DECLARE(linearDamping)
-	CLASS_MEMBER_DECLARE(angularDamping)
-	CLASS_MEMBER_DECLARE(allowSleep)
-	CLASS_MEMBER_DECLARE(awake)
-	CLASS_MEMBER_DECLARE(fixedRotation)
-	CLASS_MEMBER_DECLARE(bullet)
-	CLASS_MEMBER_DECLARE(active)
-	CLASS_MEMBER_DECLARE(userData)
-	CLASS_MEMBER_DECLARE(gravityScale)
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2BodyDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, type)
+			NANX_MEMBER_APPLY(prototype_template, position)
+			NANX_MEMBER_APPLY(prototype_template, angle)
+			NANX_MEMBER_APPLY(prototype_template, linearVelocity)
+			NANX_MEMBER_APPLY(prototype_template, angularVelocity)
+			NANX_MEMBER_APPLY(prototype_template, linearDamping)
+			NANX_MEMBER_APPLY(prototype_template, angularDamping)
+			NANX_MEMBER_APPLY(prototype_template, allowSleep)
+			NANX_MEMBER_APPLY(prototype_template, awake)
+			NANX_MEMBER_APPLY(prototype_template, fixedRotation)
+			NANX_MEMBER_APPLY(prototype_template, bullet)
+			NANX_MEMBER_APPLY(prototype_template, active)
+			NANX_MEMBER_APPLY(prototype_template, userData)
+			NANX_MEMBER_APPLY(prototype_template, gravityScale)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		WrapBodyDef* wrap = new WrapBodyDef();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_MEMBER_INTEGER	(b2BodyType, type)
+	NANX_MEMBER_OBJECT	(position) // m_wrap_position
+	NANX_MEMBER_NUMBER	(float32, angle)
+	NANX_MEMBER_OBJECT	(linearVelocity) // m_wrap_linearVelocity
+	NANX_MEMBER_NUMBER	(float32, angularVelocity)
+	NANX_MEMBER_NUMBER	(float32, linearDamping)
+	NANX_MEMBER_NUMBER	(float32, angularDamping)
+	NANX_MEMBER_BOOLEAN	(bool, allowSleep)
+	NANX_MEMBER_BOOLEAN	(bool, awake)
+	NANX_MEMBER_BOOLEAN	(bool, fixedRotation)
+	NANX_MEMBER_BOOLEAN	(bool, bullet)
+	NANX_MEMBER_BOOLEAN	(bool, active)
+	NANX_MEMBER_VALUE	(userData) // m_wrap_userData
+	NANX_MEMBER_NUMBER	(float32, gravityScale)
 };
-
-Persistent<Function> WrapBodyDef::g_constructor;
-
-void WrapBodyDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplBodyDef = NanNew<FunctionTemplate>(New);
-	tplBodyDef->SetClassName(NanNew<String>("b2BodyDef"));
-	tplBodyDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplBodyDef, type)
-	CLASS_MEMBER_APPLY(tplBodyDef, position)
-	CLASS_MEMBER_APPLY(tplBodyDef, angle)
-	CLASS_MEMBER_APPLY(tplBodyDef, linearVelocity)
-	CLASS_MEMBER_APPLY(tplBodyDef, angularVelocity)
-	CLASS_MEMBER_APPLY(tplBodyDef, linearDamping)
-	CLASS_MEMBER_APPLY(tplBodyDef, angularDamping)
-	CLASS_MEMBER_APPLY(tplBodyDef, allowSleep)
-	CLASS_MEMBER_APPLY(tplBodyDef, awake)
-	CLASS_MEMBER_APPLY(tplBodyDef, fixedRotation)
-	CLASS_MEMBER_APPLY(tplBodyDef, bullet)
-	CLASS_MEMBER_APPLY(tplBodyDef, active)
-	CLASS_MEMBER_APPLY(tplBodyDef, userData)
-	CLASS_MEMBER_APPLY(tplBodyDef, gravityScale)
-	NanAssignPersistent(g_constructor, tplBodyDef->GetFunction());
-	exports->Set(NanNew<String>("b2BodyDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapBodyDef::New)
-{
-	NanScope();
-	WrapBodyDef* that = new WrapBodyDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapBodyDef, m_bd, b2BodyType, type		)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapBodyDef, m_bd, position				) // m_bd_position
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapBodyDef, m_bd, float32, angle			)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapBodyDef, m_bd, linearVelocity			) // m_bd_linearVelocity
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapBodyDef, m_bd, float32, angularVelocity)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapBodyDef, m_bd, float32, linearDamping	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapBodyDef, m_bd, float32, angularDamping	)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapBodyDef, m_bd, bool, allowSleep		)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapBodyDef, m_bd, bool, awake				)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapBodyDef, m_bd, bool, fixedRotation		)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapBodyDef, m_bd, bool, bullet			)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapBodyDef, m_bd, bool, active			)
-CLASS_MEMBER_IMPLEMENT_VALUE	(WrapBodyDef, m_bd, userData				) // m_bd_userData
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapBodyDef, m_bd, float32, gravityScale	)
 
 //// b2Body
 
-class WrapBody : public node::ObjectWrap
+class WrapBody : public Nan::ObjectWrap
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-	static WrapBody* GetWrap(const b2Body* body)
-	{
-		return (WrapBody*) body->GetUserData();
-	}
-
-	static void SetWrap(b2Body* body, WrapBody* wrap)
-	{
-		body->SetUserData(wrap);
-	}
-
-private:
 	b2Body* m_body;
-	Persistent<Object> m_body_world;
-	Persistent<Value> m_body_userData;
-
+	Nan::Persistent<v8::Object> m_body_world;
+	Nan::Persistent<v8::Value> m_body_userData;
 private:
-	WrapBody() :
-		m_body(NULL)
-	{
-		// create javascript objects
-	}
+	WrapBody() : m_body(NULL) {}
 	~WrapBody()
 	{
-		NanDisposePersistent(m_body_world);
-		NanDisposePersistent(m_body_userData);
+		m_body_world.Reset();
+		m_body_userData.Reset();
 	}
-
 public:
-	b2Body* GetBody() { return m_body; }
-
-	void SetupObject(Handle<Object> h_world, WrapBodyDef* wrap_bd, b2Body* body)
+	b2Body* Peek() { return m_body; }
+public:
+	void SetupObject(v8::Local<v8::Object> h_world, WrapBodyDef* wrap_bd, b2Body* body)
 	{
 		m_body = body;
-
 		// set body internal data
 		WrapBody::SetWrap(m_body, this);
 		// set reference to this body (prevent GC)
 		Ref();
-
 		// set reference to world object
-		NanAssignPersistent(m_body_world, h_world);
+		m_body_world.Reset(h_world);
 		// set reference to user data object
-		NanAssignPersistent(m_body_userData, wrap_bd->GetUserDataHandle());
+		m_body_userData.Reset(wrap_bd->GetUserDataHandle());
 	}
-
 	b2Body* ResetObject()
 	{
 		// clear reference to world object
-		NanDisposePersistent(m_body_world);
+		m_body_world.Reset();
 		// clear reference to user data object
-		NanDisposePersistent(m_body_userData);
-
+		m_body_userData.Reset();
 		// clear reference to this body (allow GC)
 		Unref();
 		// clear body internal data
 		WrapBody::SetWrap(m_body, NULL);
-
 		b2Body* body = m_body;
 		m_body = NULL;
 		return body;
 	}
+public:
+	static WrapBody* GetWrap(const b2Body* body)
+	{
+		return static_cast<WrapBody*>(body->GetUserData());
+	}
+	static void SetWrap(b2Body* body, WrapBody* wrap)
+	{
+		body->SetUserData(wrap);
+	}
+public:
+	static WrapBody* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapBody* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapBody>(object); }
+	static b2Body* Peek(v8::Local<v8::Value> value) { WrapBody* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapBody* wrap = new WrapBody();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 
 private:
-	static NAN_METHOD(New);
-
-	CLASS_METHOD_DECLARE(CreateFixture)
-	CLASS_METHOD_DECLARE(DestroyFixture)
-	CLASS_METHOD_DECLARE(SetTransform)
-	CLASS_METHOD_DECLARE(GetTransform)
-	CLASS_METHOD_DECLARE(GetPosition)
-	CLASS_METHOD_DECLARE(GetAngle)
-	CLASS_METHOD_DECLARE(GetWorldCenter)
-	CLASS_METHOD_DECLARE(GetLocalCenter)
-	CLASS_METHOD_DECLARE(SetLinearVelocity)
-	CLASS_METHOD_DECLARE(GetLinearVelocity)
-	CLASS_METHOD_DECLARE(SetAngularVelocity)
-	CLASS_METHOD_DECLARE(GetAngularVelocity)
-	CLASS_METHOD_DECLARE(ApplyForce)
-	CLASS_METHOD_DECLARE(ApplyForceToCenter)
-	CLASS_METHOD_DECLARE(ApplyTorque)
-	CLASS_METHOD_DECLARE(ApplyLinearImpulse)
-	CLASS_METHOD_DECLARE(ApplyLinearImpulseToCenter)
-	CLASS_METHOD_DECLARE(ApplyAngularImpulse)
-	CLASS_METHOD_DECLARE(GetMass)
-	CLASS_METHOD_DECLARE(GetInertia)
-	CLASS_METHOD_DECLARE(GetMassData) //void GetMassData(b2MassData* data) const;
-	CLASS_METHOD_DECLARE(SetMassData) //void SetMassData(const b2MassData* data);
-	CLASS_METHOD_DECLARE(ResetMassData) //void ResetMassData();
-	CLASS_METHOD_DECLARE(GetWorldPoint)
-	CLASS_METHOD_DECLARE(GetWorldVector)
-	CLASS_METHOD_DECLARE(GetLocalPoint)
-	CLASS_METHOD_DECLARE(GetLocalVector)
-	CLASS_METHOD_DECLARE(GetLinearVelocityFromWorldPoint)
-	CLASS_METHOD_DECLARE(GetLinearVelocityFromLocalPoint)
-	CLASS_METHOD_DECLARE(GetLinearDamping)
-	CLASS_METHOD_DECLARE(SetLinearDamping)
-	CLASS_METHOD_DECLARE(GetAngularDamping)
-	CLASS_METHOD_DECLARE(SetAngularDamping)
-	CLASS_METHOD_DECLARE(GetGravityScale)
-	CLASS_METHOD_DECLARE(SetGravityScale)
-	CLASS_METHOD_DECLARE(SetType)
-	CLASS_METHOD_DECLARE(GetType)
-	CLASS_METHOD_DECLARE(SetBullet)
-	CLASS_METHOD_DECLARE(IsBullet)
-	CLASS_METHOD_DECLARE(SetSleepingAllowed)
-	CLASS_METHOD_DECLARE(IsSleepingAllowed)
-	CLASS_METHOD_DECLARE(SetAwake)
-	CLASS_METHOD_DECLARE(IsAwake)
-	CLASS_METHOD_DECLARE(SetActive)
-	CLASS_METHOD_DECLARE(IsActive)
-	CLASS_METHOD_DECLARE(SetFixedRotation)
-	CLASS_METHOD_DECLARE(IsFixedRotation)
-	CLASS_METHOD_DECLARE(GetFixtureList)
-///	b2JointEdge* GetJointList();
-///	const b2JointEdge* GetJointList() const;
-///	b2ContactEdge* GetContactList();
-///	const b2ContactEdge* GetContactList() const;
-	CLASS_METHOD_DECLARE(GetNext)
-	CLASS_METHOD_DECLARE(GetUserData)
-	CLASS_METHOD_DECLARE(SetUserData)
-	CLASS_METHOD_DECLARE(GetWorld)
-	CLASS_METHOD_DECLARE(ShouldCollideConnected)
-///	void Dump();
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2Body"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, CreateFixture)
+			NANX_METHOD_APPLY(prototype_template, DestroyFixture)
+			NANX_METHOD_APPLY(prototype_template, SetTransform)
+			NANX_METHOD_APPLY(prototype_template, GetTransform)
+			NANX_METHOD_APPLY(prototype_template, GetPosition)
+			NANX_METHOD_APPLY(prototype_template, GetAngle)
+			NANX_METHOD_APPLY(prototype_template, GetWorldCenter)
+			NANX_METHOD_APPLY(prototype_template, GetLocalCenter)
+			NANX_METHOD_APPLY(prototype_template, SetLinearVelocity)
+			NANX_METHOD_APPLY(prototype_template, GetLinearVelocity)
+			NANX_METHOD_APPLY(prototype_template, SetAngularVelocity)
+			NANX_METHOD_APPLY(prototype_template, GetAngularVelocity)
+			NANX_METHOD_APPLY(prototype_template, ApplyForce)
+			NANX_METHOD_APPLY(prototype_template, ApplyForceToCenter)
+			NANX_METHOD_APPLY(prototype_template, ApplyTorque)
+			NANX_METHOD_APPLY(prototype_template, ApplyLinearImpulse)
+			NANX_METHOD_APPLY(prototype_template, ApplyLinearImpulseToCenter)
+			NANX_METHOD_APPLY(prototype_template, ApplyAngularImpulse)
+			NANX_METHOD_APPLY(prototype_template, GetMass)
+			NANX_METHOD_APPLY(prototype_template, GetInertia)
+			NANX_METHOD_APPLY(prototype_template, GetMassData)
+			NANX_METHOD_APPLY(prototype_template, SetMassData)
+			NANX_METHOD_APPLY(prototype_template, ResetMassData)
+			NANX_METHOD_APPLY(prototype_template, GetWorldPoint)
+			NANX_METHOD_APPLY(prototype_template, GetWorldVector)
+			NANX_METHOD_APPLY(prototype_template, GetLocalPoint)
+			NANX_METHOD_APPLY(prototype_template, GetLocalVector)
+			NANX_METHOD_APPLY(prototype_template, GetLinearVelocityFromWorldPoint)
+			NANX_METHOD_APPLY(prototype_template, GetLinearVelocityFromLocalPoint)
+			NANX_METHOD_APPLY(prototype_template, GetLinearDamping)
+			NANX_METHOD_APPLY(prototype_template, SetLinearDamping)
+			NANX_METHOD_APPLY(prototype_template, GetAngularDamping)
+			NANX_METHOD_APPLY(prototype_template, SetAngularDamping)
+			NANX_METHOD_APPLY(prototype_template, GetGravityScale)
+			NANX_METHOD_APPLY(prototype_template, SetGravityScale)
+			NANX_METHOD_APPLY(prototype_template, SetType)
+			NANX_METHOD_APPLY(prototype_template, GetType)
+			NANX_METHOD_APPLY(prototype_template, SetBullet)
+			NANX_METHOD_APPLY(prototype_template, IsBullet)
+			NANX_METHOD_APPLY(prototype_template, SetSleepingAllowed)
+			NANX_METHOD_APPLY(prototype_template, IsSleepingAllowed)
+			NANX_METHOD_APPLY(prototype_template, SetAwake)
+			NANX_METHOD_APPLY(prototype_template, IsAwake)
+			NANX_METHOD_APPLY(prototype_template, SetActive)
+			NANX_METHOD_APPLY(prototype_template, IsActive)
+			NANX_METHOD_APPLY(prototype_template, SetFixedRotation)
+			NANX_METHOD_APPLY(prototype_template, IsFixedRotation)
+			NANX_METHOD_APPLY(prototype_template, GetFixtureList)
+			NANX_METHOD_APPLY(prototype_template, GetNext)
+			NANX_METHOD_APPLY(prototype_template, GetUserData)
+			NANX_METHOD_APPLY(prototype_template, SetUserData)
+			NANX_METHOD_APPLY(prototype_template, GetWorld)
+			NANX_METHOD_APPLY(prototype_template, ShouldCollideConnected)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		WrapBody* wrap = new WrapBody();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_METHOD(CreateFixture)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapFixtureDef* wrap_fd = WrapFixtureDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		// create box2d fixture
+		b2Fixture* fixture = wrap->m_body->CreateFixture(&wrap_fd->UseFixtureDef());
+		// create javascript fixture object
+		v8::Local<v8::Object> h_fixture = WrapFixture::NewInstance();
+		WrapFixture* wrap_fixture = WrapFixture::Unwrap(h_fixture);
+		// set up javascript fixture object
+		wrap_fixture->SetupObject(info.This(), wrap_fd, fixture);
+		info.GetReturnValue().Set(h_fixture);
+	}
+	NANX_METHOD(DestroyFixture)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> h_fixture = v8::Local<v8::Object>::Cast(info[0]);
+		WrapFixture* wrap_fixture = WrapFixture::Unwrap(h_fixture);
+		// delete box2d fixture
+		wrap->m_body->DestroyFixture(wrap_fixture->Peek());
+		// reset javascript fixture object
+		wrap_fixture->ResetObject();
+	}
+	NANX_METHOD(SetTransform)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* position = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		float32 angle = NANX_float32(info[1]);
+		wrap->m_body->SetTransform(position->GetVec2(), angle);
+	}
+	NANX_METHOD(GetTransform)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapTransform::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapTransform::Unwrap(out)->SetTransform(wrap->m_body->GetTransform());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetPosition)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetPosition());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetAngle) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetAngle())); }
+	NANX_METHOD(GetWorldCenter)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetWorldCenter());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalCenter)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLocalCenter());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetLinearVelocity)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		wrap->m_body->SetLinearVelocity(WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]))->GetVec2());
+	}
+	NANX_METHOD(GetLinearVelocity)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLinearVelocity());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetAngularVelocity) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetAngularVelocity(NANX_float32(info[0])); }
+	NANX_METHOD(GetAngularVelocity) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetAngularVelocity())); }
+	NANX_METHOD(ApplyForce)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* force = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapVec2* point = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		bool wake = (info.Length() > 2) ? NANX_bool(info[2]) : true;
+		wrap->m_body->ApplyForce(force->GetVec2(), point->GetVec2(), wake);
+	}
+	NANX_METHOD(ApplyForceToCenter)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* force = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		bool wake = (info.Length() > 1) ? NANX_bool(info[1]) : true;
+		wrap->m_body->ApplyForceToCenter(force->GetVec2(), wake);
+	}
+	NANX_METHOD(ApplyTorque)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		float32 torque = NANX_float32(info[0]);
+		bool wake = (info.Length() > 1) ? NANX_bool(info[1]) : true;
+		wrap->m_body->ApplyTorque(torque, wake);
+	}
+	NANX_METHOD(ApplyLinearImpulse)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* impulse = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapVec2* point = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		bool wake = (info.Length() > 2) ? NANX_bool(info[2]) : true;
+		wrap->m_body->ApplyLinearImpulse(impulse->GetVec2(), point->GetVec2(), wake);
+	}
+	NANX_METHOD(ApplyLinearImpulseToCenter)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* impulse = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		bool wake = (info.Length() > 1) ? NANX_bool(info[1]) : true;
+		wrap->m_body->ApplyLinearImpulse(impulse->GetVec2(), wrap->m_body->GetWorldCenter(), wake);
+	}
+	NANX_METHOD(ApplyAngularImpulse)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		float32 impulse = NANX_float32(info[0]);
+		bool wake = (info.Length() > 1) ? NANX_bool(info[1]) : true;
+		wrap->m_body->ApplyAngularImpulse(impulse, wake);
+	}
+	NANX_METHOD(GetMass) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetMass())); }
+	NANX_METHOD(GetInertia) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetInertia())); }
+	NANX_METHOD(GetMassData)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapMassData::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		b2MassData mass_data;
+		wrap->m_body->GetMassData(&mass_data);
+		WrapMassData::Unwrap(out)->SetMassData(mass_data);
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetMassData)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		const b2MassData& mass_data = WrapMassData::Unwrap(v8::Local<v8::Object>::Cast(info[0]))->GetMassData();
+		wrap->m_body->SetMassData(&mass_data);
+	}
+	NANX_METHOD(ResetMassData) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->ResetMassData(); }
+	NANX_METHOD(GetWorldPoint)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_localPoint = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetWorldPoint(wrap_localPoint->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetWorldVector)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_localVector = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetWorldVector(wrap_localVector->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalPoint)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_worldPoint = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLocalPoint(wrap_worldPoint->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalVector)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_worldVector = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLocalVector(wrap_worldVector->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLinearVelocityFromWorldPoint)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_worldPoint = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLinearVelocityFromWorldPoint(wrap_worldPoint->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLinearVelocityFromLocalPoint)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapVec2* wrap_localPoint = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_body->GetLinearVelocityFromLocalPoint(wrap_localPoint->GetVec2()));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLinearDamping) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetLinearDamping())); }
+	NANX_METHOD(SetLinearDamping) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetLinearDamping(NANX_float32(info[0])); }
+	NANX_METHOD(GetAngularDamping) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetAngularDamping())); }
+	NANX_METHOD(SetAngularDamping) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetAngularDamping(NANX_float32(info[0])); }
+	NANX_METHOD(GetGravityScale) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetGravityScale())); }
+	NANX_METHOD(SetGravityScale) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetGravityScale(NANX_float32(info[0])); }
+	NANX_METHOD(SetType) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetType(NANX_b2BodyType(info[0])); }
+	NANX_METHOD(GetType) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->GetType())); }
+	NANX_METHOD(SetBullet) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetBullet(NANX_bool(info[0])); }
+	NANX_METHOD(IsBullet) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->IsBullet())); }
+	NANX_METHOD(SetSleepingAllowed) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetSleepingAllowed(NANX_bool(info[0])); }
+	NANX_METHOD(IsSleepingAllowed) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->IsSleepingAllowed())); }
+	NANX_METHOD(SetAwake) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetAwake(NANX_bool(info[0])); }
+	NANX_METHOD(IsAwake) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->IsAwake())); }
+	NANX_METHOD(SetActive) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetActive(NANX_bool(info[0])); }
+	NANX_METHOD(IsActive) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->IsActive())); }
+	NANX_METHOD(SetFixedRotation) { WrapBody* wrap = Unwrap(info.This()); wrap->m_body->SetFixedRotation(NANX_bool(info[0])); }
+	NANX_METHOD(IsFixedRotation) { WrapBody* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_body->IsFixedRotation())); }
+	NANX_METHOD(GetFixtureList)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		b2Fixture* fixture = wrap->m_body->GetFixtureList();
+		if (fixture)
+		{
+			// get fixture internal data
+			WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+			info.GetReturnValue().Set(wrap_fixture->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	///b2JointEdge* GetJointList();
+	///const b2JointEdge* GetJointList() const;
+	///b2ContactEdge* GetContactList();
+	///const b2ContactEdge* GetContactList() const;
+	NANX_METHOD(GetNext)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		b2Body* body = wrap->m_body->GetNext();
+		if (body)
+		{
+			// get body internal data
+			WrapBody* wrap_body = WrapBody::GetWrap(body);
+			info.GetReturnValue().Set(wrap_body->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetUserData)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New<v8::Value>(wrap->m_body_userData));
+	}
+	NANX_METHOD(SetUserData)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		if (!info[0]->IsUndefined())
+		{
+			wrap->m_body_userData.Reset(info[0]);
+		}
+		else
+		{
+			wrap->m_body_userData.Reset();
+		}
+	}
+	NANX_METHOD(GetWorld)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New<v8::Object>(wrap->m_body_world));
+	}
+	NANX_METHOD(ShouldCollideConnected)
+	{
+		WrapBody* wrap = Unwrap(info.This());
+		WrapBody* wrap_other = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		info.GetReturnValue().Set(Nan::New(wrap->m_body->ShouldCollideConnected(wrap_other->m_body)));
+	}
+	///void Dump();
 };
-
-Persistent<Function> WrapBody::g_constructor;
-
-void WrapBody::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplBody = NanNew<FunctionTemplate>(New);
-	tplBody->SetClassName(NanNew<String>("b2Body"));
-	tplBody->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplBody, CreateFixture)
-	CLASS_METHOD_APPLY(tplBody, DestroyFixture)
-	CLASS_METHOD_APPLY(tplBody, SetTransform)
-	CLASS_METHOD_APPLY(tplBody, GetTransform)
-	CLASS_METHOD_APPLY(tplBody, GetPosition)
-	CLASS_METHOD_APPLY(tplBody, GetAngle)
-	CLASS_METHOD_APPLY(tplBody, GetWorldCenter)
-	CLASS_METHOD_APPLY(tplBody, GetLocalCenter)
-	CLASS_METHOD_APPLY(tplBody, SetLinearVelocity)
-	CLASS_METHOD_APPLY(tplBody, GetLinearVelocity)
-	CLASS_METHOD_APPLY(tplBody, SetAngularVelocity)
-	CLASS_METHOD_APPLY(tplBody, GetAngularVelocity)
-	CLASS_METHOD_APPLY(tplBody, ApplyForce)
-	CLASS_METHOD_APPLY(tplBody, ApplyForceToCenter)
-	CLASS_METHOD_APPLY(tplBody, ApplyTorque)
-	CLASS_METHOD_APPLY(tplBody, ApplyLinearImpulse)
-	CLASS_METHOD_APPLY(tplBody, ApplyLinearImpulseToCenter)
-	CLASS_METHOD_APPLY(tplBody, ApplyAngularImpulse)
-	CLASS_METHOD_APPLY(tplBody, GetMass)
-	CLASS_METHOD_APPLY(tplBody, GetInertia)
-	CLASS_METHOD_APPLY(tplBody, GetMassData)
-	CLASS_METHOD_APPLY(tplBody, SetMassData)
-	CLASS_METHOD_APPLY(tplBody, ResetMassData)
-	CLASS_METHOD_APPLY(tplBody, GetWorldPoint)
-	CLASS_METHOD_APPLY(tplBody, GetWorldVector)
-	CLASS_METHOD_APPLY(tplBody, GetLocalPoint)
-	CLASS_METHOD_APPLY(tplBody, GetLocalVector)
-	CLASS_METHOD_APPLY(tplBody, GetLinearVelocityFromWorldPoint)
-	CLASS_METHOD_APPLY(tplBody, GetLinearVelocityFromLocalPoint)
-	CLASS_METHOD_APPLY(tplBody, GetLinearDamping)
-	CLASS_METHOD_APPLY(tplBody, SetLinearDamping)
-	CLASS_METHOD_APPLY(tplBody, GetAngularDamping)
-	CLASS_METHOD_APPLY(tplBody, SetAngularDamping)
-	CLASS_METHOD_APPLY(tplBody, GetGravityScale)
-	CLASS_METHOD_APPLY(tplBody, SetGravityScale)
-	CLASS_METHOD_APPLY(tplBody, SetType)
-	CLASS_METHOD_APPLY(tplBody, GetType)
-	CLASS_METHOD_APPLY(tplBody, SetBullet)
-	CLASS_METHOD_APPLY(tplBody, IsBullet)
-	CLASS_METHOD_APPLY(tplBody, SetSleepingAllowed)
-	CLASS_METHOD_APPLY(tplBody, IsSleepingAllowed)
-	CLASS_METHOD_APPLY(tplBody, SetAwake)
-	CLASS_METHOD_APPLY(tplBody, IsAwake)
-	CLASS_METHOD_APPLY(tplBody, SetActive)
-	CLASS_METHOD_APPLY(tplBody, IsActive)
-	CLASS_METHOD_APPLY(tplBody, SetFixedRotation)
-	CLASS_METHOD_APPLY(tplBody, IsFixedRotation)
-	CLASS_METHOD_APPLY(tplBody, GetFixtureList)
-	CLASS_METHOD_APPLY(tplBody, GetNext)
-	CLASS_METHOD_APPLY(tplBody, GetUserData)
-	CLASS_METHOD_APPLY(tplBody, SetUserData)
-	CLASS_METHOD_APPLY(tplBody, GetWorld)
-	CLASS_METHOD_APPLY(tplBody, ShouldCollideConnected)
-	NanAssignPersistent(g_constructor, tplBody->GetFunction());
-	exports->Set(NanNew<String>("b2Body"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapBody::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapBody::New)
-{
-	NanScope();
-	WrapBody* that = new WrapBody();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapBody, CreateFixture,
-{
-	WrapFixtureDef* wrap_fd = node::ObjectWrap::Unwrap<WrapFixtureDef>(Local<Object>::Cast(args[0]));
-
-	// create box2d fixture
-	b2Fixture* fixture = that->m_body->CreateFixture(&wrap_fd->UseFixtureDef());
-
-	// create javascript fixture object
-	Local<Object> h_fixture = NanNew<Object>(WrapFixture::NewInstance());
-	WrapFixture* wrap_fixture = node::ObjectWrap::Unwrap<WrapFixture>(h_fixture);
-
-	// set up javascript fixture object
-	wrap_fixture->SetupObject(args.This(), wrap_fd, fixture);
-
-	NanReturnValue(h_fixture);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, DestroyFixture,
-{
-	Local<Object> h_fixture = Local<Object>::Cast(args[0]);
-	WrapFixture* wrap_fixture = node::ObjectWrap::Unwrap<WrapFixture>(h_fixture);
-
-	// delete box2d fixture
-	that->m_body->DestroyFixture(wrap_fixture->GetFixture());
-
-	// reset javascript fixture object
-	wrap_fixture->ResetObject();
-
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetTransform,
-{
-	WrapVec2* position = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	float32 angle = (float32) args[1]->NumberValue();
-	that->m_body->SetTransform(position->GetVec2(), angle);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetTransform,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapTransform::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapTransform>(out)->SetTransform(that->m_body->GetTransform());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetPosition,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetPosition());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetAngle, { NanReturnValue(NanNew<Number>(that->m_body->GetAngle())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetWorldCenter,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetWorldCenter());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLocalCenter,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLocalCenter());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetLinearVelocity,
-{
-	that->m_body->SetLinearVelocity(node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]))->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLinearVelocity,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLinearVelocity());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetAngularVelocity, { that->m_body->SetAngularVelocity((float32) args[0]->NumberValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, GetAngularVelocity, { NanReturnValue(NanNew<Number>(that->m_body->GetAngularVelocity())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyForce,
-{
-	WrapVec2* force = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* point = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	bool wake = (args.Length() > 2) ? args[2]->BooleanValue() : true;
-	that->m_body->ApplyForce(force->GetVec2(), point->GetVec2(), wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyForceToCenter,
-{
-	WrapVec2* force = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	bool wake = (args.Length() > 1) ? args[1]->BooleanValue() : true;
-	that->m_body->ApplyForceToCenter(force->GetVec2(), wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyTorque,
-{
-	float32 torque = (float32) args[0]->NumberValue();
-	bool wake = (args.Length() > 1) ? args[1]->BooleanValue() : true;
-	that->m_body->ApplyTorque(torque, wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyLinearImpulse,
-{
-	WrapVec2* impulse = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* point = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	bool wake = (args.Length() > 2) ? args[2]->BooleanValue() : true;
-	that->m_body->ApplyLinearImpulse(impulse->GetVec2(), point->GetVec2(), wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyLinearImpulseToCenter,
-{
-	WrapVec2* impulse = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	bool wake = (args.Length() > 1) ? args[1]->BooleanValue() : true;
-	that->m_body->ApplyLinearImpulse(impulse->GetVec2(), that->m_body->GetWorldCenter(), wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ApplyAngularImpulse,
-{
-	float32 impulse = (float32) args[0]->NumberValue();
-	bool wake = (args.Length() > 1) ? args[1]->BooleanValue() : true;
-	that->m_body->ApplyAngularImpulse(impulse, wake);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetMass, { NanReturnValue(NanNew<Number>(that->m_body->GetMass())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetInertia, { NanReturnValue(NanNew<Number>(that->m_body->GetInertia())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetMassData,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapMassData::NewInstance()) : Local<Object>::Cast(args[0]);
-	b2MassData mass_data;
-	that->m_body->GetMassData(&mass_data);
-	node::ObjectWrap::Unwrap<WrapMassData>(out)->SetMassData(mass_data);
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetMassData,
-{
-	const b2MassData& mass_data = node::ObjectWrap::Unwrap<WrapMassData>(Local<Object>::Cast(args[0]))->GetMassData();
-	that->m_body->SetMassData(&mass_data);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ResetMassData, { that->m_body->ResetMassData(); NanReturnUndefined(); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetWorldPoint,
-{
-	WrapVec2* wrap_localPoint = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetWorldPoint(wrap_localPoint->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetWorldVector,
-{
-	WrapVec2* wrap_localVector = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetWorldVector(wrap_localVector->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLocalPoint,
-{
-	WrapVec2* wrap_worldPoint = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLocalPoint(wrap_worldPoint->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLocalVector,
-{
-	WrapVec2* wrap_worldVector = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLocalVector(wrap_worldVector->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLinearVelocityFromWorldPoint,
-{
-	WrapVec2* wrap_worldPoint = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLinearVelocityFromWorldPoint(wrap_worldPoint->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLinearVelocityFromLocalPoint,
-{
-	WrapVec2* wrap_localPoint = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_body->GetLinearVelocityFromLocalPoint(wrap_localPoint->GetVec2()));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetLinearDamping, { NanReturnValue(NanNew<Number>(that->m_body->GetLinearDamping())); })
-CLASS_METHOD_IMPLEMENT(WrapBody, SetLinearDamping, { that->m_body->SetLinearDamping((float32) args[0]->NumberValue()); NanReturnUndefined(); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetAngularDamping, { NanReturnValue(NanNew<Number>(that->m_body->GetAngularDamping())); })
-CLASS_METHOD_IMPLEMENT(WrapBody, SetAngularDamping, { that->m_body->SetAngularDamping((float32) args[0]->NumberValue()); NanReturnUndefined(); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetGravityScale, { NanReturnValue(NanNew<Number>(that->m_body->GetGravityScale())); })
-CLASS_METHOD_IMPLEMENT(WrapBody, SetGravityScale, { that->m_body->SetGravityScale((float32) args[0]->NumberValue()); NanReturnUndefined(); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetType, { that->m_body->SetType((b2BodyType) args[0]->Int32Value()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, GetType, { NanReturnValue(NanNew<Integer>(that->m_body->GetType())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetBullet, { that->m_body->SetBullet(args[0]->BooleanValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, IsBullet, { NanReturnValue(NanNew<Boolean>(that->m_body->IsBullet())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetSleepingAllowed, { that->m_body->SetSleepingAllowed(args[0]->BooleanValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, IsSleepingAllowed, { NanReturnValue(NanNew<Boolean>(that->m_body->IsSleepingAllowed())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetAwake, { that->m_body->SetAwake(args[0]->BooleanValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, IsAwake, { NanReturnValue(NanNew<Boolean>(that->m_body->IsAwake())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetActive, { that->m_body->SetActive(args[0]->BooleanValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, IsActive, { NanReturnValue(NanNew<Boolean>(that->m_body->IsActive())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetFixedRotation, { that->m_body->SetFixedRotation(args[0]->BooleanValue()); NanReturnUndefined(); })
-CLASS_METHOD_IMPLEMENT(WrapBody, IsFixedRotation, { NanReturnValue(NanNew<Boolean>(that->m_body->IsFixedRotation())); })
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetFixtureList,
-{
-	b2Fixture* fixture = that->m_body->GetFixtureList();
-	if (fixture)
-	{
-		// get fixture internal data
-		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-		NanReturnValue(NanObjectWrapHandle(wrap_fixture));
-	}
-	NanReturnNull();
-})
-
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetNext,
-{
-	b2Body* body = that->m_body->GetNext();
-	if (body)
-	{
-		// get body internal data
-		WrapBody* wrap_body = WrapBody::GetWrap(body);
-		NanReturnValue(NanObjectWrapHandle(wrap_body));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetUserData,
-{
-	NanReturnValue(NanNew<Value>(that->m_body_userData));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, SetUserData,
-{
-	if (!args[0]->IsUndefined())
-	{
-		NanAssignPersistent(that->m_body_userData, args[0]);
-	}
-	else
-	{
-		NanDisposePersistent(that->m_body_userData);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, GetWorld,
-{
-	NanReturnValue(NanNew<Object>(that->m_body_world));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapBody, ShouldCollideConnected,
-{
-	WrapBody* wrap_other = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	NanReturnValue(NanNew<Boolean>(that->m_body->ShouldCollideConnected(wrap_other->m_body)));
-})
 
 //// b2JointDef
 
-class WrapJointDef : public node::ObjectWrap
+class WrapJointDef : public Nan::ObjectWrap
 {
-public:
-	static Persistent<FunctionTemplate> g_constructor_template;
-
-public:
-	static void Init(Handle<Object> exports);
-
 protected:
-	Persistent<Value> m_jd_userData;	// m_jd.userData
-	Persistent<Object> m_jd_bodyA;		// m_jd.bodyA
-	Persistent<Object> m_jd_bodyB;		// m_jd.bodyB
-
+	Nan::Persistent<v8::Value> m_wrap_userData;	// m_jd.userData
+	Nan::Persistent<v8::Object> m_wrap_bodyA;		// m_jd.bodyA
+	Nan::Persistent<v8::Object> m_wrap_bodyB;		// m_jd.bodyB
 public:
-	WrapJointDef()
-	{
-		// create javascript objects
-	}
+	WrapJointDef() {}
 	~WrapJointDef()
 	{
-		NanDisposePersistent(m_jd_userData);
-		NanDisposePersistent(m_jd_bodyA);
-		NanDisposePersistent(m_jd_bodyB);
+		m_wrap_userData.Reset();
+		m_wrap_bodyA.Reset();
+		m_wrap_bodyB.Reset();
 	}
-
+public:
+	b2JointDef* Peek() { return &GetJointDef(); }
+	virtual b2JointDef& GetJointDef() = 0;
+	const b2JointDef& UseJointDef() { SyncPull(); return GetJointDef(); }
+	v8::Local<v8::Value> GetUserDataHandle() { return Nan::New<v8::Value>(m_wrap_userData); }
+	v8::Local<v8::Object> GetBodyAHandle() { return Nan::New<v8::Object>(m_wrap_bodyA); }
+	v8::Local<v8::Object> GetBodyBHandle() { return Nan::New<v8::Object>(m_wrap_bodyB); }
 public:
 	virtual void SyncPull()
 	{
 		b2JointDef& jd = GetJointDef();
 		// sync: pull data from javascript objects
 		//jd.userData; // not used
-		jd.bodyA = m_jd_bodyA.IsEmpty() ? NULL : node::ObjectWrap::Unwrap<WrapBody>(NanNew<Object>(m_jd_bodyA))->GetBody();
-		jd.bodyB = m_jd_bodyB.IsEmpty() ? NULL : node::ObjectWrap::Unwrap<WrapBody>(NanNew<Object>(m_jd_bodyB))->GetBody();
+		jd.bodyA = m_wrap_bodyA.IsEmpty() ? NULL : WrapBody::Unwrap(Nan::New<v8::Object>(m_wrap_bodyA))->Peek();
+		jd.bodyB = m_wrap_bodyB.IsEmpty() ? NULL : WrapBody::Unwrap(Nan::New<v8::Object>(m_wrap_bodyB))->Peek();
 	}
-
 	virtual void SyncPush()
 	{
 		b2JointDef& jd = GetJointDef();
@@ -2538,3231 +2520,3348 @@ public:
 		//jd.userData; // not used
 		if (jd.bodyA)
 		{
-			NanAssignPersistent(m_jd_bodyA, NanObjectWrapHandle(WrapBody::GetWrap(jd.bodyA)));
+			m_wrap_bodyA.Reset(WrapBody::GetWrap(jd.bodyA)->handle());
 		}
 		else
 		{
-			NanDisposePersistent(m_jd_bodyA);
+			m_wrap_bodyA.Reset();
 		}
 		if (jd.bodyB)
 		{
-			NanAssignPersistent(m_jd_bodyB, NanObjectWrapHandle(WrapBody::GetWrap(jd.bodyB)));
+			m_wrap_bodyB.Reset(WrapBody::GetWrap(jd.bodyB)->handle());
 		}
 		else
 		{
-			NanDisposePersistent(m_jd_bodyB);
+			m_wrap_bodyB.Reset();
 		}
 	}
-
-	virtual b2JointDef& GetJointDef() = 0;
-
-	const b2JointDef& UseJointDef() { SyncPull(); return GetJointDef(); }
-
-	Handle<Value> GetUserDataHandle() { return NanNew<Value>(m_jd_userData); }
-	Handle<Object> GetBodyAHandle() { return NanNew<Object>(m_jd_bodyA); }
-	Handle<Object> GetBodyBHandle() { return NanNew<Object>(m_jd_bodyB); }
-
+public:
+	static WrapJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapJointDef>(object); }
+	static b2JointDef* Peek(v8::Local<v8::Value> value) { WrapJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>();
+			function_template->SetClassName(NANX_SYMBOL("b2JointDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, type)
+			NANX_MEMBER_APPLY(prototype_template, userData)
+			NANX_MEMBER_APPLY(prototype_template, bodyA)
+			NANX_MEMBER_APPLY(prototype_template, bodyB)
+			NANX_MEMBER_APPLY(prototype_template, collideConnected)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	CLASS_MEMBER_DECLARE(type)
-	CLASS_MEMBER_DECLARE(userData)
-	CLASS_MEMBER_DECLARE(bodyA)
-	CLASS_MEMBER_DECLARE(bodyB)
-	CLASS_MEMBER_DECLARE(collideConnected)
+	NANX_MEMBER_INTEGER	(b2JointType, type)
+	NANX_MEMBER_VALUE	(userData) // m_wrap_userData
+	NANX_MEMBER_OBJECT	(bodyA) // m_wrap_bodyA
+	NANX_MEMBER_OBJECT	(bodyB) // m_wrap_bodyB
+	NANX_MEMBER_BOOLEAN	(bool, collideConnected)
 };
-
-Persistent<FunctionTemplate> WrapJointDef::g_constructor_template;
-
-void WrapJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplJointDef = NanNew<FunctionTemplate>();
-	tplJointDef->SetClassName(NanNew<String>("b2JointDef"));
-	tplJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplJointDef, type)
-	CLASS_MEMBER_APPLY(tplJointDef, userData)
-	CLASS_MEMBER_APPLY(tplJointDef, bodyA)
-	CLASS_MEMBER_APPLY(tplJointDef, bodyB)
-	CLASS_MEMBER_APPLY(tplJointDef, collideConnected)
-	NanAssignPersistent(g_constructor_template, tplJointDef);
-	exports->Set(NanNew<String>("b2JointDef"), NanNew<FunctionTemplate>(g_constructor_template)->GetFunction());
-}
-
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapJointDef, GetJointDef(), b2JointType, type		)
-CLASS_MEMBER_IMPLEMENT_VALUE	(WrapJointDef, m_jd, userData						) // m_jd_userData
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapJointDef, m_jd, bodyA							) // m_jd_bodyA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapJointDef, m_jd, bodyB							) // m_jd_bodyB
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapJointDef, GetJointDef(), bool, collideConnected)
 
 //// b2Joint
 
-class WrapJoint : public node::ObjectWrap
+class WrapJoint : public Nan::ObjectWrap
 {
-public:
-	static Persistent<FunctionTemplate> g_constructor_template;
-
-public:
-	static void Init(Handle<Object> exports);
-
-	static WrapJoint* GetWrap(const b2Joint* joint)
-	{
-		return (WrapJoint*) joint->GetUserData();
-	}
-
-	static void SetWrap(b2Joint* joint, WrapJoint* wrap)
-	{
-		joint->SetUserData(wrap);
-	}
-
 private:
-	Persistent<Object> m_joint_bodyA;
-	Persistent<Object> m_joint_bodyB;
-	Persistent<Value> m_joint_userData;
-
+	Nan::Persistent<v8::Object> m_joint_world;
+	Nan::Persistent<v8::Object> m_joint_bodyA;
+	Nan::Persistent<v8::Object> m_joint_bodyB;
+	Nan::Persistent<v8::Value> m_joint_userData;
 public:
-	WrapJoint()
-	{
-		// create javascript objects
-	}
+	WrapJoint() {}
 	~WrapJoint()
 	{
-		NanDisposePersistent(m_joint_bodyA);
-		NanDisposePersistent(m_joint_bodyB);
-		NanDisposePersistent(m_joint_userData);
+		m_joint_bodyA.Reset();
+		m_joint_bodyB.Reset();
+		m_joint_userData.Reset();
 	}
-
-	virtual b2Joint* GetJoint() = 0;
-
 public:
-	void SetupObject(WrapJointDef* wrap_jd)
+	b2Joint* Peek() { return GetJoint(); }
+	virtual b2Joint* GetJoint() = 0;
+public:
+	void SetupObject(v8::Local<v8::Object> h_world, WrapJointDef* wrap_jd)
 	{
 		b2Joint* joint = GetJoint();
-
 		// set joint internal data
 		WrapJoint::SetWrap(joint, this);
 		// set reference to this joint (prevent GC)
 		Ref();
-
+		// set reference to joint world object
+		m_joint_world.Reset(h_world);
 		// set references to joint body objects
-		NanAssignPersistent(m_joint_bodyA, wrap_jd->GetBodyAHandle());
-		NanAssignPersistent(m_joint_bodyB, wrap_jd->GetBodyBHandle());
+		m_joint_bodyA.Reset(wrap_jd->GetBodyAHandle());
+		m_joint_bodyB.Reset(wrap_jd->GetBodyBHandle());
 		// set reference to joint user data object
-		NanAssignPersistent(m_joint_userData, wrap_jd->GetUserDataHandle());
+		m_joint_userData.Reset(wrap_jd->GetUserDataHandle());
 	}
-
 	void ResetObject()
 	{
 		b2Joint* joint = GetJoint();
-
+		// clear reference to joint world object
+		m_joint_world.Reset();
 		// clear references to joint body objects
-		NanDisposePersistent(m_joint_bodyA);
-		NanDisposePersistent(m_joint_bodyB);
+		m_joint_bodyA.Reset();
+		m_joint_bodyB.Reset();
 		// clear reference to joint user data object
-		NanDisposePersistent(m_joint_userData);
-
+		m_joint_userData.Reset();
 		// clear reference to this joint (allow GC)
 		Unref();
 		// clear joint internal data
 		WrapJoint::SetWrap(joint, NULL);
 	}
-
+public:
+	static WrapJoint* GetWrap(const b2Joint* joint)
+	{
+		return static_cast<WrapJoint*>(joint->GetUserData());
+	}
+	static void SetWrap(b2Joint* joint, WrapJoint* wrap)
+	{
+		joint->SetUserData(wrap);
+	}
+public:
+	static WrapJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapJoint>(object); }
+	static b2Joint* Peek(v8::Local<v8::Value> value) { WrapJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>();
+			function_template->SetClassName(NANX_SYMBOL("b2Joint"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetType)
+			NANX_METHOD_APPLY(prototype_template, GetBodyA)
+			NANX_METHOD_APPLY(prototype_template, GetBodyB)
+			NANX_METHOD_APPLY(prototype_template, GetAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetReactionForce)
+			NANX_METHOD_APPLY(prototype_template, GetReactionTorque)
+			NANX_METHOD_APPLY(prototype_template, GetNext)
+			NANX_METHOD_APPLY(prototype_template, GetUserData)
+			NANX_METHOD_APPLY(prototype_template, SetUserData)
+			NANX_METHOD_APPLY(prototype_template, IsActive)
+			NANX_METHOD_APPLY(prototype_template, GetCollideConnected)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	CLASS_METHOD_DECLARE(GetType)
-	CLASS_METHOD_DECLARE(GetBodyA)
-	CLASS_METHOD_DECLARE(GetBodyB)
-	CLASS_METHOD_DECLARE(GetAnchorA)
-	CLASS_METHOD_DECLARE(GetAnchorB)
-	CLASS_METHOD_DECLARE(GetReactionForce)
-	CLASS_METHOD_DECLARE(GetReactionTorque)
-	CLASS_METHOD_DECLARE(GetNext)
-	CLASS_METHOD_DECLARE(GetUserData)
-	CLASS_METHOD_DECLARE(SetUserData)
-	CLASS_METHOD_DECLARE(IsActive)
-	CLASS_METHOD_DECLARE(GetCollideConnected)
-///	virtual void Dump() { b2Log("// Dump is not supported for this joint type.\n"); }
-//	virtual void ShiftOrigin(const b2Vec2& newOrigin) { B2_NOT_USED(newOrigin);  }
+	NANX_METHOD(GetType)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->GetJoint()->GetType()));
+	}
+	NANX_METHOD(GetBodyA)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		if (!wrap->m_joint_bodyA.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Object>(wrap->m_joint_bodyA));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetBodyB)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		if (!wrap->m_joint_bodyB.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Object>(wrap->m_joint_bodyB));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetAnchorA)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->GetJoint()->GetAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetAnchorB)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->GetJoint()->GetAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetReactionForce)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		float32 inv_dt = NANX_float32(info[0]);
+		v8::Local<v8::Object> out = info[1]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[1]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->GetJoint()->GetReactionForce(inv_dt));
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetReactionTorque)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		float32 inv_dt = NANX_float32(info[0]);
+		info.GetReturnValue().Set(Nan::New(wrap->GetJoint()->GetReactionTorque(inv_dt)));
+	}
+	NANX_METHOD(GetNext)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		b2Joint* joint = wrap->GetJoint()->GetNext();
+		if (joint)
+		{
+			// get joint internal data
+			WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
+			info.GetReturnValue().Set(wrap_joint->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetUserData)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		if (!wrap->m_joint_userData.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Value>(wrap->m_joint_userData));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(SetUserData)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		if (!info[0]->IsUndefined())
+		{
+			wrap->m_joint_userData.Reset(info[0]);
+		}
+		else
+		{
+			wrap->m_joint_userData.Reset();
+		}
+	}
+	NANX_METHOD(IsActive)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->GetJoint()->IsActive()));
+	}
+	NANX_METHOD(GetCollideConnected)
+	{
+		WrapJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->GetJoint()->GetCollideConnected()));
+	}
+	///virtual void Dump() { b2Log("// Dump is not supported for this joint type.\n"); }
+	//virtual void ShiftOrigin(const b2Vec2& newOrigin) { B2_NOT_USED(newOrigin);  }
 };
-
-Persistent<FunctionTemplate> WrapJoint::g_constructor_template;
-
-void WrapJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplJoint = NanNew<FunctionTemplate>();
-	tplJoint->SetClassName(NanNew<String>("b2Joint"));
-	tplJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplJoint, GetType)
-	CLASS_METHOD_APPLY(tplJoint, GetBodyA)
-	CLASS_METHOD_APPLY(tplJoint, GetBodyB)
-	CLASS_METHOD_APPLY(tplJoint, GetAnchorA)
-	CLASS_METHOD_APPLY(tplJoint, GetAnchorB)
-	CLASS_METHOD_APPLY(tplJoint, GetReactionForce)
-	CLASS_METHOD_APPLY(tplJoint, GetReactionTorque)
-	CLASS_METHOD_APPLY(tplJoint, GetNext)
-	CLASS_METHOD_APPLY(tplJoint, GetUserData)
-	CLASS_METHOD_APPLY(tplJoint, SetUserData)
-	CLASS_METHOD_APPLY(tplJoint, IsActive)
-	CLASS_METHOD_APPLY(tplJoint, GetCollideConnected)
-	NanAssignPersistent(g_constructor_template, tplJoint);
-	exports->Set(NanNew<String>("b2Joint"), NanNew<FunctionTemplate>(g_constructor_template)->GetFunction());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetType,
-{
-	NanReturnValue(NanNew<Integer>(that->GetJoint()->GetType()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetBodyA,
-{
-	if (!that->m_joint_bodyA.IsEmpty())
-	{
-		NanReturnValue(NanNew<Object>(that->m_joint_bodyA));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetBodyB,
-{
-	if (!that->m_joint_bodyB.IsEmpty())
-	{
-		NanReturnValue(NanNew<Object>(that->m_joint_bodyB));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->GetJoint()->GetAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->GetJoint()->GetAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetReactionForce,
-{
-	float32 inv_dt = (float32) args[0]->NumberValue();
-	Local<Object> out = args[1]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[1]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->GetJoint()->GetReactionForce(inv_dt));
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetReactionTorque,
-{
-	float32 inv_dt = (float32) args[0]->NumberValue();
-	NanReturnValue(NanNew<Number>(that->GetJoint()->GetReactionTorque(inv_dt)));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetNext,
-{
-	b2Joint* joint = that->GetJoint()->GetNext();
-	if (joint)
-	{
-		// get joint internal data
-		WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
-		NanReturnValue(NanObjectWrapHandle(wrap_joint));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetUserData,
-{
-	if (!that->m_joint_userData.IsEmpty())
-	{
-		NanReturnValue(NanNew<Value>(that->m_joint_userData));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, SetUserData,
-{
-	if (!args[0]->IsUndefined())
-	{
-		NanAssignPersistent(that->m_joint_userData, args[0]);
-	}
-	else
-	{
-		NanDisposePersistent(that->m_joint_userData);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, IsActive,
-{
-	NanReturnValue(NanNew<Boolean>(that->GetJoint()->IsActive()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapJoint, GetCollideConnected,
-{
-	NanReturnValue(NanNew<Boolean>(that->GetJoint()->GetCollideConnected()));
-})
 
 //// b2RevoluteJointDef
 
 class WrapRevoluteJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2RevoluteJointDef m_revolute_jd;
-	Persistent<Object> m_revolute_jd_localAnchorA; // m_revolute_jd.localAnchorA
-	Persistent<Object> m_revolute_jd_localAnchorB; // m_revolute_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_revolute_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_revolute_jd.localAnchorB
 private:
 	WrapRevoluteJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_revolute_jd_localAnchorA, WrapVec2::NewInstance(m_revolute_jd.localAnchorA));
-		NanAssignPersistent(m_revolute_jd_localAnchorB, WrapVec2::NewInstance(m_revolute_jd.localAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_revolute_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_revolute_jd.localAnchorB));
 	}
 	~WrapRevoluteJointDef()
 	{
-		NanDisposePersistent(m_revolute_jd_localAnchorA);
-		NanDisposePersistent(m_revolute_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2RevoluteJointDef* Peek() { return &m_revolute_jd; }
+	virtual b2JointDef& GetJointDef() { return m_revolute_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_revolute_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_revolute_jd_localAnchorA))->GetVec2(); // struct copy
-		m_revolute_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_revolute_jd_localAnchorB))->GetVec2(); // struct copy
+		m_revolute_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_revolute_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_revolute_jd_localAnchorA))->SetVec2(m_revolute_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_revolute_jd_localAnchorB))->SetVec2(m_revolute_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_revolute_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_revolute_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_revolute_jd; } // override WrapJointDef
-
+public:
+	static WrapRevoluteJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapRevoluteJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapRevoluteJointDef>(object); }
+	static b2RevoluteJointDef* Peek(v8::Local<v8::Value> value) { WrapRevoluteJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->SetClassName(NANX_SYMBOL("b2RevoluteJointDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, referenceAngle)
+			NANX_MEMBER_APPLY(prototype_template, enableLimit)
+			NANX_MEMBER_APPLY(prototype_template, lowerAngle)
+			NANX_MEMBER_APPLY(prototype_template, upperAngle)
+			NANX_MEMBER_APPLY(prototype_template, enableMotor)
+			NANX_MEMBER_APPLY(prototype_template, motorSpeed)
+			NANX_MEMBER_APPLY(prototype_template, maxMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(referenceAngle)
-	CLASS_MEMBER_DECLARE(enableLimit)
-	CLASS_MEMBER_DECLARE(lowerAngle)
-	CLASS_MEMBER_DECLARE(upperAngle)
-	CLASS_MEMBER_DECLARE(enableMotor)
-	CLASS_MEMBER_DECLARE(motorSpeed)
-	CLASS_MEMBER_DECLARE(maxMotorTorque)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		WrapRevoluteJointDef* wrap = new WrapRevoluteJointDef();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_MEMBER_OBJECT	(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT	(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER	(float32, referenceAngle)
+	NANX_MEMBER_BOOLEAN	(bool, enableLimit)
+	NANX_MEMBER_NUMBER	(float32, lowerAngle)
+	NANX_MEMBER_NUMBER	(float32, upperAngle)
+	NANX_MEMBER_BOOLEAN	(bool, enableMotor)
+	NANX_MEMBER_NUMBER	(float32, motorSpeed)
+	NANX_MEMBER_NUMBER	(float32, maxMotorTorque)
+	NANX_METHOD(Initialize)
+	{
+		WrapRevoluteJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchor = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		wrap->SyncPull();
+		wrap->m_revolute_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchor->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapRevoluteJointDef::g_constructor;
-
-void WrapRevoluteJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplRevoluteJointDef = NanNew<FunctionTemplate>(New);
-	tplRevoluteJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplRevoluteJointDef->SetClassName(NanNew<String>("b2RevoluteJointDef"));
-	tplRevoluteJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, referenceAngle)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, enableLimit)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, lowerAngle)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, upperAngle)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, enableMotor)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, motorSpeed)
-	CLASS_MEMBER_APPLY(tplRevoluteJointDef, maxMotorTorque)
-	CLASS_METHOD_APPLY(tplRevoluteJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplRevoluteJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2RevoluteJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapRevoluteJointDef::New)
-{
-	NanScope();
-	WrapRevoluteJointDef* that = new WrapRevoluteJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapRevoluteJointDef, m_revolute_jd, localAnchorA				) // m_revolute_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapRevoluteJointDef, m_revolute_jd, localAnchorB				) // m_revolute_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRevoluteJointDef, m_revolute_jd, float32, referenceAngle	)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapRevoluteJointDef, m_revolute_jd, bool, enableLimit			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRevoluteJointDef, m_revolute_jd, float32, lowerAngle		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRevoluteJointDef, m_revolute_jd, float32, upperAngle		)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapRevoluteJointDef, m_revolute_jd, bool, enableMotor			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRevoluteJointDef, m_revolute_jd, float32, motorSpeed		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRevoluteJointDef, m_revolute_jd, float32, maxMotorTorque	)
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchor = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	that->SyncPull();
-	that->m_revolute_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchor->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2RevoluteJoint
 
 class WrapRevoluteJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2RevoluteJoint* m_revolute_joint;
-
 private:
 	WrapRevoluteJoint() : m_revolute_joint(NULL) {}
 	~WrapRevoluteJoint() {}
-
 public:
+	b2RevoluteJoint* Peek() { return m_revolute_joint; }
 	virtual b2Joint* GetJoint() { return m_revolute_joint; } // override WrapJoint
-
-	void SetupObject(WrapRevoluteJointDef* wrap_revolute_jd, b2RevoluteJoint* revolute_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapRevoluteJointDef* wrap_revolute_jd, b2RevoluteJoint* revolute_joint)
 	{
 		m_revolute_joint = revolute_joint;
-
-		WrapJoint::SetupObject(wrap_revolute_jd);
+		WrapJoint::SetupObject(h_world, wrap_revolute_jd);
 	}
-
 	b2RevoluteJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2RevoluteJoint* revolute_joint = m_revolute_joint;
 		m_revolute_joint = NULL;
 		return revolute_joint;
 	}
-
+public:
+	static WrapRevoluteJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapRevoluteJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapRevoluteJoint>(object); }
+	static b2RevoluteJoint* Peek(v8::Local<v8::Value> value) { WrapRevoluteJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->SetClassName(NANX_SYMBOL("b2RevoluteJoint"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetReferenceAngle)
+			NANX_METHOD_APPLY(prototype_template, GetJointAngle)
+			NANX_METHOD_APPLY(prototype_template, GetJointSpeed)
+			NANX_METHOD_APPLY(prototype_template, IsLimitEnabled)
+			NANX_METHOD_APPLY(prototype_template, EnableLimit)
+			NANX_METHOD_APPLY(prototype_template, GetLowerLimit)
+			NANX_METHOD_APPLY(prototype_template, GetUpperLimit)
+			NANX_METHOD_APPLY(prototype_template, SetLimits)
+			NANX_METHOD_APPLY(prototype_template, IsMotorEnabled)
+			NANX_METHOD_APPLY(prototype_template, EnableMotor)
+			NANX_METHOD_APPLY(prototype_template, SetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, GetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, SetMaxMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMaxMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMotorTorque)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapRevoluteJoint* wrap = new WrapRevoluteJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-///	b2Vec2 GetAnchorA() const;
-///	b2Vec2 GetAnchorB() const;
-///	b2Vec2 GetReactionForce(float32 inv_dt) const;
-///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(GetReferenceAngle)
-	CLASS_METHOD_DECLARE(GetJointAngle)
-	CLASS_METHOD_DECLARE(GetJointSpeed)
-	CLASS_METHOD_DECLARE(IsLimitEnabled)
-	CLASS_METHOD_DECLARE(EnableLimit)
-	CLASS_METHOD_DECLARE(GetLowerLimit)
-	CLASS_METHOD_DECLARE(GetUpperLimit)
-	CLASS_METHOD_DECLARE(SetLimits)
-	CLASS_METHOD_DECLARE(IsMotorEnabled)
-	CLASS_METHOD_DECLARE(EnableMotor)
-	CLASS_METHOD_DECLARE(SetMotorSpeed)
-	CLASS_METHOD_DECLARE(GetMotorSpeed)
-	CLASS_METHOD_DECLARE(SetMaxMotorTorque)
-	CLASS_METHOD_DECLARE(GetMaxMotorTorque)
-	CLASS_METHOD_DECLARE(GetMotorTorque)
-///	void Dump();
+	static NAN_METHOD(New)
+	{
+		WrapRevoluteJoint* wrap = new WrapRevoluteJoint();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	///	b2Vec2 GetAnchorA() const;
+	///	b2Vec2 GetAnchorB() const;
+	///	b2Vec2 GetReactionForce(float32 inv_dt) const;
+	///	float32 GetReactionTorque(float32 inv_dt) const;
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_revolute_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_revolute_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetReferenceAngle)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetReferenceAngle()));
+	}
+	NANX_METHOD(GetJointAngle)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetJointAngle()));
+	}
+	NANX_METHOD(GetJointSpeed)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetJointSpeed()));
+	}
+	NANX_METHOD(IsLimitEnabled)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->IsLimitEnabled()));
+	}
+	NANX_METHOD(EnableLimit)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		wrap->m_revolute_joint->EnableLimit(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetLowerLimit)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetLowerLimit()));
+	}
+	NANX_METHOD(GetUpperLimit)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetUpperLimit()));
+	}
+	NANX_METHOD(SetLimits)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		wrap->m_revolute_joint->SetLimits(NANX_float32(info[0]), NANX_float32(info[1]));
+	}
+	NANX_METHOD(IsMotorEnabled)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->IsMotorEnabled()));
+	}
+	NANX_METHOD(EnableMotor)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		wrap->m_revolute_joint->EnableMotor(NANX_bool(info[0]));
+	}
+	NANX_METHOD(SetMotorSpeed)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		wrap->m_revolute_joint->SetMotorSpeed(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMotorSpeed)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetMotorSpeed()));
+	}
+	NANX_METHOD(SetMaxMotorTorque)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		wrap->m_revolute_joint->SetMaxMotorTorque(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxMotorTorque)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetMaxMotorTorque()));
+	}
+	NANX_METHOD(GetMotorTorque)
+	{
+		WrapRevoluteJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_revolute_joint->GetMotorTorque(NANX_float32(info[0]))));
+	}
+	///	void Dump();
 };
-
-Persistent<Function> WrapRevoluteJoint::g_constructor;
-
-void WrapRevoluteJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplRevoluteJoint = NanNew<FunctionTemplate>(New);
-	tplRevoluteJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplRevoluteJoint->SetClassName(NanNew<String>("b2RevoluteJoint"));
-	tplRevoluteJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetReferenceAngle)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetJointAngle)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetJointSpeed)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, IsLimitEnabled)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, EnableLimit)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetLowerLimit)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetUpperLimit)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, SetLimits)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, IsMotorEnabled)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, EnableMotor)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, SetMotorSpeed)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetMotorSpeed)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, SetMaxMotorTorque)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetMaxMotorTorque)
-	CLASS_METHOD_APPLY(tplRevoluteJoint, GetMotorTorque)
-	NanAssignPersistent(g_constructor, tplRevoluteJoint->GetFunction());
-	exports->Set(NanNew<String>("b2RevoluteJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapRevoluteJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapRevoluteJoint::New)
-{
-	NanScope();
-	WrapRevoluteJoint* that = new WrapRevoluteJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_revolute_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_revolute_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetReferenceAngle,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetReferenceAngle()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetJointAngle,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetJointAngle()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetJointSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetJointSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, IsLimitEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_revolute_joint->IsLimitEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, EnableLimit,
-{
-	that->m_revolute_joint->EnableLimit(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetLowerLimit,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetLowerLimit()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetUpperLimit,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetUpperLimit()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, SetLimits,
-{
-	that->m_revolute_joint->SetLimits((float32) args[0]->NumberValue(), (float32) args[1]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, IsMotorEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_revolute_joint->IsMotorEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, EnableMotor,
-{
-	that->m_revolute_joint->EnableMotor(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, SetMotorSpeed,
-{
-	that->m_revolute_joint->SetMotorSpeed((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetMotorSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetMotorSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, SetMaxMotorTorque,
-{
-	that->m_revolute_joint->SetMaxMotorTorque((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetMaxMotorTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetMaxMotorTorque()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRevoluteJoint, GetMotorTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_revolute_joint->GetMotorTorque((float32) args[0]->NumberValue())));
-})
 
 //// b2PrismaticJointDef
 
 class WrapPrismaticJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2PrismaticJointDef m_prismatic_jd;
-	Persistent<Object> m_prismatic_jd_localAnchorA; // m_prismatic_jd.localAnchorA
-	Persistent<Object> m_prismatic_jd_localAnchorB; // m_prismatic_jd.localAnchorB
-	Persistent<Object> m_prismatic_jd_localAxisA;	// m_prismatic_jd.localAxisA
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_prismatic_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_prismatic_jd.localAnchorB
+	Nan::Persistent<v8::Object> m_wrap_localAxisA;	// m_prismatic_jd.localAxisA
 private:
 	WrapPrismaticJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_prismatic_jd_localAnchorA, WrapVec2::NewInstance(m_prismatic_jd.localAnchorA));
-		NanAssignPersistent(m_prismatic_jd_localAnchorB, WrapVec2::NewInstance(m_prismatic_jd.localAnchorB));
-		NanAssignPersistent(m_prismatic_jd_localAxisA, WrapVec2::NewInstance(m_prismatic_jd.localAxisA));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_prismatic_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_prismatic_jd.localAnchorB));
+		m_wrap_localAxisA.Reset(WrapVec2::NewInstance(m_prismatic_jd.localAxisA));
 	}
 	~WrapPrismaticJointDef()
 	{
-		NanDisposePersistent(m_prismatic_jd_localAnchorA);
-		NanDisposePersistent(m_prismatic_jd_localAnchorB);
-		NanDisposePersistent(m_prismatic_jd_localAxisA);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
+		m_wrap_localAxisA.Reset();
 	}
-
 public:
+	b2PrismaticJointDef* Peek() { return &m_prismatic_jd; }
+	virtual b2JointDef& GetJointDef() { return m_prismatic_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_prismatic_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAnchorA))->GetVec2(); // struct copy
-		m_prismatic_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAnchorB))->GetVec2(); // struct copy
-		m_prismatic_jd.localAxisA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAxisA))->GetVec2(); // struct copy
+		m_prismatic_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_prismatic_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
+		m_prismatic_jd.localAxisA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAxisA))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAnchorA))->SetVec2(m_prismatic_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAnchorB))->SetVec2(m_prismatic_jd.localAnchorB);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_prismatic_jd_localAxisA))->SetVec2(m_prismatic_jd.localAxisA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_prismatic_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_prismatic_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAxisA))->SetVec2(m_prismatic_jd.localAxisA);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_prismatic_jd; } // override WrapJointDef
-
+public:
+	static WrapPrismaticJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapPrismaticJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapPrismaticJointDef>(object); }
+	static b2PrismaticJointDef* Peek(v8::Local<v8::Value> value) { WrapPrismaticJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->SetClassName(NANX_SYMBOL("b2PrismaticJointDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, localAxisA)
+			NANX_MEMBER_APPLY(prototype_template, referenceAngle)
+			NANX_MEMBER_APPLY(prototype_template, enableLimit)
+			NANX_MEMBER_APPLY(prototype_template, lowerTranslation)
+			NANX_MEMBER_APPLY(prototype_template, upperTranslation)
+			NANX_MEMBER_APPLY(prototype_template, enableMotor)
+			NANX_MEMBER_APPLY(prototype_template, maxMotorForce)
+			NANX_MEMBER_APPLY(prototype_template, motorSpeed)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(localAxisA)
-	CLASS_MEMBER_DECLARE(referenceAngle)
-	CLASS_MEMBER_DECLARE(enableLimit)
-	CLASS_MEMBER_DECLARE(lowerTranslation)
-	CLASS_MEMBER_DECLARE(upperTranslation)
-	CLASS_MEMBER_DECLARE(enableMotor)
-	CLASS_MEMBER_DECLARE(maxMotorForce)
-	CLASS_MEMBER_DECLARE(motorSpeed)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		WrapPrismaticJointDef* wrap = new WrapPrismaticJointDef();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_MEMBER_OBJECT	(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT	(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_OBJECT	(localAxisA) // m_wrap_localAxisA
+	NANX_MEMBER_NUMBER	(float32, referenceAngle)
+	NANX_MEMBER_BOOLEAN	(bool, enableLimit)
+	NANX_MEMBER_NUMBER	(float32, lowerTranslation)
+	NANX_MEMBER_NUMBER	(float32, upperTranslation)
+	NANX_MEMBER_BOOLEAN	(bool, enableMotor)
+	NANX_MEMBER_NUMBER	(float32, maxMotorForce)
+	NANX_MEMBER_NUMBER	(float32, motorSpeed)
+	NANX_METHOD(Initialize)
+	{
+		WrapPrismaticJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchor = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapVec2* wrap_axis = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[3]));
+		wrap->SyncPull();
+		wrap->m_prismatic_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchor->GetVec2(), wrap_axis->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapPrismaticJointDef::g_constructor;
-
-void WrapPrismaticJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplPrismaticJointDef = NanNew<FunctionTemplate>(New);
-	tplPrismaticJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplPrismaticJointDef->SetClassName(NanNew<String>("b2PrismaticJointDef"));
-	tplPrismaticJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, localAxisA)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, referenceAngle)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, enableLimit)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, lowerTranslation)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, upperTranslation)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, enableMotor)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, maxMotorForce)
-	CLASS_MEMBER_APPLY(tplPrismaticJointDef, motorSpeed)
-	CLASS_METHOD_APPLY(tplPrismaticJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplPrismaticJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2PrismaticJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapPrismaticJointDef::New)
-{
-	NanScope();
-	WrapPrismaticJointDef* that = new WrapPrismaticJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPrismaticJointDef, m_prismatic_jd, localAnchorA				) // m_prismatic_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPrismaticJointDef, m_prismatic_jd, localAnchorB				) // m_prismatic_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPrismaticJointDef, m_prismatic_jd, localAxisA					) // m_prismatic_jd_localAxisA
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPrismaticJointDef, m_prismatic_jd, float32, referenceAngle		)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapPrismaticJointDef, m_prismatic_jd, bool, enableLimit			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPrismaticJointDef, m_prismatic_jd, float32, lowerTranslation	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPrismaticJointDef, m_prismatic_jd, float32, upperTranslation	)
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapPrismaticJointDef, m_prismatic_jd, bool, enableMotor			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPrismaticJointDef, m_prismatic_jd, float32, maxMotorForce		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPrismaticJointDef, m_prismatic_jd, float32, motorSpeed			)
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchor = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	WrapVec2* wrap_axis = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[3]));
-	that->SyncPull();
-	that->m_prismatic_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchor->GetVec2(), wrap_axis->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2PrismaticJoint
 
 class WrapPrismaticJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2PrismaticJoint* m_prismatic_joint;
-
 private:
 	WrapPrismaticJoint() : m_prismatic_joint(NULL) {}
 	~WrapPrismaticJoint() {}
-
 public:
+	b2PrismaticJoint* Peek() { return m_prismatic_joint; }
 	virtual b2Joint* GetJoint() { return m_prismatic_joint; } // override WrapJoint
-
-	void SetupObject(WrapPrismaticJointDef* wrap_prismatic_jd, b2PrismaticJoint* prismatic_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapPrismaticJointDef* wrap_prismatic_jd, b2PrismaticJoint* prismatic_joint)
 	{
 		m_prismatic_joint = prismatic_joint;
-
-		WrapJoint::SetupObject(wrap_prismatic_jd);
+		WrapJoint::SetupObject(h_world, wrap_prismatic_jd);
 	}
-
 	b2PrismaticJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2PrismaticJoint* prismatic_joint = m_prismatic_joint;
 		m_prismatic_joint = NULL;
 		return prismatic_joint;
 	}
-
+public:
+	static WrapPrismaticJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapPrismaticJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapPrismaticJoint>(object); }
+	static b2PrismaticJoint* Peek(v8::Local<v8::Value> value) { WrapPrismaticJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->SetClassName(NANX_SYMBOL("b2PrismaticJoint"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAxisA)
+			NANX_METHOD_APPLY(prototype_template, GetReferenceAngle)
+			NANX_METHOD_APPLY(prototype_template, GetJointTranslation)
+			NANX_METHOD_APPLY(prototype_template, GetJointSpeed)
+			NANX_METHOD_APPLY(prototype_template, IsLimitEnabled)
+			NANX_METHOD_APPLY(prototype_template, EnableLimit)
+			NANX_METHOD_APPLY(prototype_template, GetLowerLimit)
+			NANX_METHOD_APPLY(prototype_template, GetUpperLimit)
+			NANX_METHOD_APPLY(prototype_template, SetLimits)
+			NANX_METHOD_APPLY(prototype_template, IsMotorEnabled)
+			NANX_METHOD_APPLY(prototype_template, EnableMotor)
+			NANX_METHOD_APPLY(prototype_template, SetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, GetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, SetMaxMotorForce)
+			NANX_METHOD_APPLY(prototype_template, GetMaxMotorForce)
+			NANX_METHOD_APPLY(prototype_template, GetMotorForce)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapPrismaticJoint* wrap = new WrapPrismaticJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-///	b2Vec2 GetAnchorA() const;
-///	b2Vec2 GetAnchorB() const;
-///	b2Vec2 GetReactionForce(float32 inv_dt) const;
-///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(GetLocalAxisA)
-	CLASS_METHOD_DECLARE(GetReferenceAngle)
-	CLASS_METHOD_DECLARE(GetJointTranslation)
-	CLASS_METHOD_DECLARE(GetJointSpeed)
-	CLASS_METHOD_DECLARE(IsLimitEnabled)
-	CLASS_METHOD_DECLARE(EnableLimit)
-	CLASS_METHOD_DECLARE(GetLowerLimit)
-	CLASS_METHOD_DECLARE(GetUpperLimit)
-	CLASS_METHOD_DECLARE(SetLimits)
-	CLASS_METHOD_DECLARE(IsMotorEnabled)
-	CLASS_METHOD_DECLARE(EnableMotor)
-	CLASS_METHOD_DECLARE(SetMotorSpeed)
-	CLASS_METHOD_DECLARE(GetMotorSpeed)
-	CLASS_METHOD_DECLARE(SetMaxMotorForce)
-	CLASS_METHOD_DECLARE(GetMaxMotorForce)
-	CLASS_METHOD_DECLARE(GetMotorForce)
-///	void Dump();
+	static NAN_METHOD(New)
+	{
+		WrapPrismaticJoint* wrap = new WrapPrismaticJoint();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	///b2Vec2 GetAnchorA() const;
+	///b2Vec2 GetAnchorB() const;
+	///b2Vec2 GetReactionForce(float32 inv_dt) const;
+	///float32 GetReactionTorque(float32 inv_dt) const;
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_prismatic_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_prismatic_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAxisA)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_prismatic_joint->GetLocalAxisA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetReferenceAngle)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetReferenceAngle()));
+	}
+	NANX_METHOD(GetJointTranslation)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetJointTranslation()));
+	}
+	NANX_METHOD(GetJointSpeed)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetJointSpeed()));
+	}
+	NANX_METHOD(IsLimitEnabled)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->IsLimitEnabled()));
+	}
+	NANX_METHOD(EnableLimit)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		wrap->m_prismatic_joint->EnableLimit(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetLowerLimit)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetLowerLimit()));
+	}
+	NANX_METHOD(GetUpperLimit)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetUpperLimit()));
+	}
+	NANX_METHOD(SetLimits)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		wrap->m_prismatic_joint->SetLimits(NANX_float32(info[0]), NANX_float32(info[1]));
+	}
+	NANX_METHOD(IsMotorEnabled)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->IsMotorEnabled()));
+	}
+	NANX_METHOD(EnableMotor)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		wrap->m_prismatic_joint->EnableMotor(NANX_bool(info[0]));
+	}
+	NANX_METHOD(SetMotorSpeed)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		wrap->m_prismatic_joint->SetMotorSpeed(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMotorSpeed)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetMotorSpeed()));
+	}
+	NANX_METHOD(SetMaxMotorForce)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		wrap->m_prismatic_joint->SetMaxMotorForce(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxMotorForce)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetMaxMotorForce()));
+	}
+	NANX_METHOD(GetMotorForce)
+	{
+		WrapPrismaticJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_prismatic_joint->GetMotorForce(NANX_float32(info[0]))));
+	}
+	///void Dump();
 };
-
-Persistent<Function> WrapPrismaticJoint::g_constructor;
-
-void WrapPrismaticJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplPrismaticJoint = NanNew<FunctionTemplate>(New);
-	tplPrismaticJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplPrismaticJoint->SetClassName(NanNew<String>("b2PrismaticJoint"));
-	tplPrismaticJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetLocalAxisA)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetReferenceAngle)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetJointTranslation)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetJointSpeed)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, IsLimitEnabled)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, EnableLimit)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetLowerLimit)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetUpperLimit)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, SetLimits)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, IsMotorEnabled)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, EnableMotor)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, SetMotorSpeed)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetMotorSpeed)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, SetMaxMotorForce)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetMaxMotorForce)
-	CLASS_METHOD_APPLY(tplPrismaticJoint, GetMotorForce)
-	NanAssignPersistent(g_constructor, tplPrismaticJoint->GetFunction());
-	exports->Set(NanNew<String>("b2PrismaticJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapPrismaticJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapPrismaticJoint::New)
-{
-	NanScope();
-	WrapPrismaticJoint* that = new WrapPrismaticJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_prismatic_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_prismatic_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetLocalAxisA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_prismatic_joint->GetLocalAxisA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetReferenceAngle,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetReferenceAngle()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetJointTranslation,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetJointTranslation()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetJointSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetJointSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, IsLimitEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_prismatic_joint->IsLimitEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, EnableLimit,
-{
-	that->m_prismatic_joint->EnableLimit(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetLowerLimit,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetLowerLimit()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetUpperLimit,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetUpperLimit()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, SetLimits,
-{
-	that->m_prismatic_joint->SetLimits((float32) args[0]->NumberValue(), (float32) args[1]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, IsMotorEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_prismatic_joint->IsMotorEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, EnableMotor,
-{
-	that->m_prismatic_joint->EnableMotor(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, SetMotorSpeed,
-{
-	that->m_prismatic_joint->SetMotorSpeed((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetMotorSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetMotorSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, SetMaxMotorForce,
-{
-	that->m_prismatic_joint->SetMaxMotorForce((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetMaxMotorForce,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetMaxMotorForce()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPrismaticJoint, GetMotorForce,
-{
-	NanReturnValue(NanNew<Number>(that->m_prismatic_joint->GetMotorForce((float32) args[0]->NumberValue())));
-})
 
 //// b2DistanceJointDef
 
 class WrapDistanceJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2DistanceJointDef m_distance_jd;
-	Persistent<Object> m_distance_jd_localAnchorA; // m_distance_jd.localAnchorA
-	Persistent<Object> m_distance_jd_localAnchorB; // m_distance_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_distance_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_distance_jd.localAnchorB
 private:
 	WrapDistanceJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_distance_jd_localAnchorA, WrapVec2::NewInstance(m_distance_jd.localAnchorA));
-		NanAssignPersistent(m_distance_jd_localAnchorB, WrapVec2::NewInstance(m_distance_jd.localAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_distance_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_distance_jd.localAnchorB));
 	}
 	~WrapDistanceJointDef()
 	{
-		NanDisposePersistent(m_distance_jd_localAnchorA);
-		NanDisposePersistent(m_distance_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2DistanceJointDef* Peek() { return &m_distance_jd; }
+	virtual b2JointDef& GetJointDef() { return m_distance_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_distance_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_distance_jd_localAnchorA))->GetVec2(); // struct copy
-		m_distance_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_distance_jd_localAnchorB))->GetVec2(); // struct copy
+		m_distance_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_distance_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_distance_jd_localAnchorA))->SetVec2(m_distance_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_distance_jd_localAnchorB))->SetVec2(m_distance_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_distance_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_distance_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_distance_jd; } // override WrapJointDef
-
+public:
+	static WrapDistanceJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapDistanceJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapDistanceJointDef>(object); }
+	static b2DistanceJointDef* Peek(v8::Local<v8::Value> value) { WrapDistanceJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->SetClassName(NANX_SYMBOL("b2DistanceJointDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, length)
+			NANX_MEMBER_APPLY(prototype_template, frequencyHz)
+			NANX_MEMBER_APPLY(prototype_template, dampingRatio)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+			g_function_template.Reset(function_template);
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(length)
-	CLASS_MEMBER_DECLARE(frequencyHz)
-	CLASS_MEMBER_DECLARE(dampingRatio)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		WrapDistanceJointDef* wrap = new WrapDistanceJointDef();
+		wrap->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
+	}
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER(float32, length)
+	NANX_MEMBER_NUMBER(float32, frequencyHz)
+	NANX_MEMBER_NUMBER(float32, dampingRatio)
+	NANX_METHOD(Initialize)
+	{
+		WrapDistanceJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchorA = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapVec2* wrap_anchorB = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[3]));
+		wrap->SyncPull();
+		wrap->m_distance_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapDistanceJointDef::g_constructor;
-
-void WrapDistanceJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplDistanceJointDef = NanNew<FunctionTemplate>(New);
-	tplDistanceJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplDistanceJointDef->SetClassName(NanNew<String>("b2DistanceJointDef"));
-	tplDistanceJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplDistanceJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplDistanceJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplDistanceJointDef, length)
-	CLASS_MEMBER_APPLY(tplDistanceJointDef, frequencyHz)
-	CLASS_MEMBER_APPLY(tplDistanceJointDef, dampingRatio)
-	CLASS_METHOD_APPLY(tplDistanceJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplDistanceJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2DistanceJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapDistanceJointDef::New)
-{
-	NanScope();
-	WrapDistanceJointDef* that = new WrapDistanceJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapDistanceJointDef, m_distance_jd, localAnchorA				) // m_distance_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapDistanceJointDef, m_distance_jd, localAnchorB				) // m_distance_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapDistanceJointDef, m_distance_jd, float32, length			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapDistanceJointDef, m_distance_jd, float32, frequencyHz		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapDistanceJointDef, m_distance_jd, float32, dampingRatio		)
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchorA = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	WrapVec2* wrap_anchorB = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[3]));
-	that->SyncPull();
-	that->m_distance_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2DistanceJoint
 
 class WrapDistanceJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2DistanceJoint* m_distance_joint;
-
 private:
 	WrapDistanceJoint() : m_distance_joint(NULL) {}
 	~WrapDistanceJoint() {}
-
 public:
+	b2DistanceJoint* Peek() { return m_distance_joint; }
 	virtual b2Joint* GetJoint() { return m_distance_joint; } // override WrapJoint
-
-	void SetupObject(WrapDistanceJointDef* wrap_distance_jd, b2DistanceJoint* distance_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapDistanceJointDef* wrap_distance_jd, b2DistanceJoint* distance_joint)
 	{
 		m_distance_joint = distance_joint;
-
-		WrapJoint::SetupObject(wrap_distance_jd);
+		WrapJoint::SetupObject(h_world, wrap_distance_jd);
 	}
-
 	b2DistanceJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2DistanceJoint* distance_joint = m_distance_joint;
 		m_distance_joint = NULL;
 		return distance_joint;
 	}
-
+public:
+	static WrapDistanceJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapDistanceJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapDistanceJoint>(object); }
+	static b2DistanceJoint* Peek(v8::Local<v8::Value> value) { WrapDistanceJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2DistanceJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, SetLength)
+			NANX_METHOD_APPLY(prototype_template, GetLength)
+			NANX_METHOD_APPLY(prototype_template, SetFrequency)
+			NANX_METHOD_APPLY(prototype_template, GetFrequency)
+			NANX_METHOD_APPLY(prototype_template, SetDampingRatio)
+			NANX_METHOD_APPLY(prototype_template, GetDampingRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapDistanceJoint* wrap = new WrapDistanceJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapDistanceJoint* wrap = new WrapDistanceJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(SetLength)
-	CLASS_METHOD_DECLARE(GetLength)
-	CLASS_METHOD_DECLARE(SetFrequency)
-	CLASS_METHOD_DECLARE(GetFrequency)
-	CLASS_METHOD_DECLARE(SetDampingRatio)
-	CLASS_METHOD_DECLARE(GetDampingRatio)
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_distance_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_distance_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetLength)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		wrap->m_distance_joint->SetLength(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetLength)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_distance_joint->GetLength()));
+	}
+	NANX_METHOD(SetFrequency)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		wrap->m_distance_joint->SetFrequency(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetFrequency)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_distance_joint->GetFrequency()));
+	}
+	NANX_METHOD(SetDampingRatio)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		wrap->m_distance_joint->SetDampingRatio(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetDampingRatio)
+	{
+		WrapDistanceJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_distance_joint->GetDampingRatio()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapDistanceJoint::g_constructor;
-
-void WrapDistanceJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplDistanceJoint = NanNew<FunctionTemplate>(New);
-	tplDistanceJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplDistanceJoint->SetClassName(NanNew<String>("b2DistanceJoint"));
-	tplDistanceJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplDistanceJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplDistanceJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplDistanceJoint, SetLength)
-	CLASS_METHOD_APPLY(tplDistanceJoint, GetLength)
-	CLASS_METHOD_APPLY(tplDistanceJoint, SetFrequency)
-	CLASS_METHOD_APPLY(tplDistanceJoint, GetFrequency)
-	CLASS_METHOD_APPLY(tplDistanceJoint, SetDampingRatio)
-	CLASS_METHOD_APPLY(tplDistanceJoint, GetDampingRatio)
-	NanAssignPersistent(g_constructor, tplDistanceJoint->GetFunction());
-	exports->Set(NanNew<String>("b2DistanceJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapDistanceJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapDistanceJoint::New)
-{
-	NanScope();
-	WrapDistanceJoint* that = new WrapDistanceJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_distance_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_distance_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, SetLength,
-{
-	that->m_distance_joint->SetLength((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, GetLength,
-{
-	NanReturnValue(NanNew<Number>(that->m_distance_joint->GetLength()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, SetFrequency,
-{
-	that->m_distance_joint->SetFrequency((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, GetFrequency,
-{
-	NanReturnValue(NanNew<Number>(that->m_distance_joint->GetFrequency()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, SetDampingRatio,
-{
-	that->m_distance_joint->SetDampingRatio((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapDistanceJoint, GetDampingRatio,
-{
-	NanReturnValue(NanNew<Number>(that->m_distance_joint->GetDampingRatio()));
-})
 
 //// b2PulleyJointDef
 
 class WrapPulleyJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2PulleyJointDef m_pulley_jd;
-	Persistent<Object> m_pulley_jd_groundAnchorA; // m_pulley_jd.groundAnchorA
-	Persistent<Object> m_pulley_jd_groundAnchorB; // m_pulley_jd.groundAnchorB
-	Persistent<Object> m_pulley_jd_localAnchorA; // m_pulley_jd.localAnchorA
-	Persistent<Object> m_pulley_jd_localAnchorB; // m_pulley_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_groundAnchorA; // m_pulley_jd.groundAnchorA
+	Nan::Persistent<v8::Object> m_wrap_groundAnchorB; // m_pulley_jd.groundAnchorB
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_pulley_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_pulley_jd.localAnchorB
 private:
 	WrapPulleyJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_pulley_jd_groundAnchorA, WrapVec2::NewInstance(m_pulley_jd.groundAnchorA));
-		NanAssignPersistent(m_pulley_jd_groundAnchorB, WrapVec2::NewInstance(m_pulley_jd.groundAnchorB));
-		NanAssignPersistent(m_pulley_jd_localAnchorA, WrapVec2::NewInstance(m_pulley_jd.localAnchorA));
-		NanAssignPersistent(m_pulley_jd_localAnchorB, WrapVec2::NewInstance(m_pulley_jd.localAnchorB));
+		m_wrap_groundAnchorA.Reset(WrapVec2::NewInstance(m_pulley_jd.groundAnchorA));
+		m_wrap_groundAnchorB.Reset(WrapVec2::NewInstance(m_pulley_jd.groundAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_pulley_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_pulley_jd.localAnchorB));
 	}
 	~WrapPulleyJointDef()
 	{
-		NanDisposePersistent(m_pulley_jd_localAnchorA);
-		NanDisposePersistent(m_pulley_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2PulleyJointDef* Peek() { return &m_pulley_jd; }
+	virtual b2JointDef& GetJointDef() { return m_pulley_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_pulley_jd.groundAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_groundAnchorA))->GetVec2(); // struct copy
-		m_pulley_jd.groundAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_groundAnchorB))->GetVec2(); // struct copy
-		m_pulley_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_localAnchorA))->GetVec2(); // struct copy
-		m_pulley_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_localAnchorB))->GetVec2(); // struct copy
+		m_pulley_jd.groundAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_groundAnchorA))->GetVec2(); // struct copy
+		m_pulley_jd.groundAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_groundAnchorB))->GetVec2(); // struct copy
+		m_pulley_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_pulley_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_groundAnchorA))->SetVec2(m_pulley_jd.groundAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_groundAnchorB))->SetVec2(m_pulley_jd.groundAnchorB);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_localAnchorA))->SetVec2(m_pulley_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_pulley_jd_localAnchorB))->SetVec2(m_pulley_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_groundAnchorA))->SetVec2(m_pulley_jd.groundAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_groundAnchorB))->SetVec2(m_pulley_jd.groundAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_pulley_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_pulley_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_pulley_jd; } // override WrapJointDef
-
+public:
+	static WrapPulleyJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapPulleyJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapPulleyJointDef>(object); }
+	static b2PulleyJointDef* Peek(v8::Local<v8::Value> value) { WrapPulleyJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2PulleyJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, groundAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, groundAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, lengthA)
+			NANX_MEMBER_APPLY(prototype_template, lengthB)
+			NANX_MEMBER_APPLY(prototype_template, ratio)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapPulleyJointDef* wrap = new WrapPulleyJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(groundAnchorA)
-	CLASS_MEMBER_DECLARE(groundAnchorB)
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(lengthA)
-	CLASS_MEMBER_DECLARE(lengthB)
-	CLASS_MEMBER_DECLARE(ratio)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapPulleyJointDef* wrap = new WrapPulleyJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(groundAnchorA) // m_wrap_groundAnchorA
+	NANX_MEMBER_OBJECT(groundAnchorB) // m_wrap_groundAnchorB
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER(float32, lengthA)
+	NANX_MEMBER_NUMBER(float32, lengthB)
+	NANX_MEMBER_NUMBER(float32, ratio)
+	NANX_METHOD(Initialize)
+	{
+		WrapPulleyJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_groundAnchorA = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapVec2* wrap_groundAnchorB = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[3]));
+		WrapVec2* wrap_anchorA = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[4]));
+		WrapVec2* wrap_anchorB = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[5]));
+		float32 ratio = NANX_float32(info[6]);
+		wrap->SyncPull();
+		wrap->m_pulley_jd.Initialize(
+		   wrap_bodyA->Peek(), wrap_bodyB->Peek(), 
+		   wrap_groundAnchorA->GetVec2(), wrap_groundAnchorB->GetVec2(), 
+		   wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2(), 
+		   ratio);
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapPulleyJointDef::g_constructor;
-
-void WrapPulleyJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplPulleyJointDef = NanNew<FunctionTemplate>(New);
-	tplPulleyJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplPulleyJointDef->SetClassName(NanNew<String>("b2PulleyJointDef"));
-	tplPulleyJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, groundAnchorA)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, groundAnchorB)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, lengthA)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, lengthB)
-	CLASS_MEMBER_APPLY(tplPulleyJointDef, ratio)
-	CLASS_METHOD_APPLY(tplPulleyJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplPulleyJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2PulleyJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapPulleyJointDef::New)
-{
-	NanScope();
-	WrapPulleyJointDef* that = new WrapPulleyJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPulleyJointDef, m_pulley_jd, groundAnchorA		) // m_pulley_jd_groundAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPulleyJointDef, m_pulley_jd, groundAnchorB		) // m_pulley_jd_groundAnchorB
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPulleyJointDef, m_pulley_jd, localAnchorA		) // m_pulley_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapPulleyJointDef, m_pulley_jd, localAnchorB		) // m_pulley_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPulleyJointDef, m_pulley_jd, float32, lengthA	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPulleyJointDef, m_pulley_jd, float32, lengthB	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapPulleyJointDef, m_pulley_jd, float32, ratio	)
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_groundAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	WrapVec2* wrap_groundAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[3]));
-	WrapVec2* wrap_anchorA = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[4]));
-	WrapVec2* wrap_anchorB = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[5]));
-	float32 ratio = (float32) args[6]->NumberValue();
-	that->SyncPull();
-	that->m_pulley_jd.Initialize(
-	   wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), 
-	   wrap_groundAnchorA->GetVec2(), wrap_groundAnchorB->GetVec2(), 
-	   wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2(), 
-	   ratio);
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2PulleyJoint
 
 class WrapPulleyJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2PulleyJoint* m_pulley_joint;
-
 private:
 	WrapPulleyJoint() : m_pulley_joint(NULL) {}
 	~WrapPulleyJoint() {}
-
 public:
+	b2PulleyJoint* Peek() { return m_pulley_joint; }
 	virtual b2Joint* GetJoint() { return m_pulley_joint; } // override WrapJoint
-
-	void SetupObject(WrapPulleyJointDef* wrap_pulley_jd, b2PulleyJoint* pulley_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapPulleyJointDef* wrap_pulley_jd, b2PulleyJoint* pulley_joint)
 	{
 		m_pulley_joint = pulley_joint;
-
-		WrapJoint::SetupObject(wrap_pulley_jd);
+		WrapJoint::SetupObject(h_world, wrap_pulley_jd);
 	}
-
 	b2PulleyJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2PulleyJoint* pulley_joint = m_pulley_joint;
 		m_pulley_joint = NULL;
 		return pulley_joint;
 	}
-
+public:
+	static WrapPulleyJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapPulleyJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapPulleyJoint>(object); }
+	static b2PulleyJoint* Peek(v8::Local<v8::Value> value) { WrapPulleyJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2PulleyJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetGroundAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetGroundAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetLengthA)
+			NANX_METHOD_APPLY(prototype_template, GetLengthB)
+			NANX_METHOD_APPLY(prototype_template, GetRatio)
+			NANX_METHOD_APPLY(prototype_template, GetCurrentLengthA)
+			NANX_METHOD_APPLY(prototype_template, GetCurrentLengthB)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapPulleyJoint* wrap = new WrapPulleyJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapPulleyJoint* wrap = new WrapPulleyJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetGroundAnchorA)
-	CLASS_METHOD_DECLARE(GetGroundAnchorB)
-	CLASS_METHOD_DECLARE(GetLengthA)
-	CLASS_METHOD_DECLARE(GetLengthB)
-	CLASS_METHOD_DECLARE(GetRatio)
-	CLASS_METHOD_DECLARE(GetCurrentLengthA)
-	CLASS_METHOD_DECLARE(GetCurrentLengthB)
+	NANX_METHOD(GetGroundAnchorA)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_pulley_joint->GetGroundAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetGroundAnchorB)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_pulley_joint->GetGroundAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLengthA)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_pulley_joint->GetLengthA()));
+	}
+	NANX_METHOD(GetLengthB)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_pulley_joint->GetLengthB()));
+	}
+	NANX_METHOD(GetRatio)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_pulley_joint->GetRatio()));
+	}
+	NANX_METHOD(GetCurrentLengthA)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_pulley_joint->GetCurrentLengthA()));
+	}
+	NANX_METHOD(GetCurrentLengthB)
+	{
+		WrapPulleyJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_pulley_joint->GetCurrentLengthB()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapPulleyJoint::g_constructor;
-
-void WrapPulleyJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplPulleyJoint = NanNew<FunctionTemplate>(New);
-	tplPulleyJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplPulleyJoint->SetClassName(NanNew<String>("b2PulleyJoint"));
-	tplPulleyJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetGroundAnchorA)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetGroundAnchorB)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetLengthA)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetLengthB)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetRatio)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetCurrentLengthA)
-	CLASS_METHOD_APPLY(tplPulleyJoint, GetCurrentLengthB)
-	NanAssignPersistent(g_constructor, tplPulleyJoint->GetFunction());
-	exports->Set(NanNew<String>("b2PulleyJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapPulleyJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapPulleyJoint::New)
-{
-	NanScope();
-	WrapPulleyJoint* that = new WrapPulleyJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetGroundAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_pulley_joint->GetGroundAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetGroundAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_pulley_joint->GetGroundAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetLengthA,
-{
-	NanReturnValue(NanNew<Number>(that->m_pulley_joint->GetLengthA()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetLengthB,
-{
-	NanReturnValue(NanNew<Number>(that->m_pulley_joint->GetLengthB()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetRatio,
-{
-	NanReturnValue(NanNew<Number>(that->m_pulley_joint->GetRatio()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetCurrentLengthA,
-{
-	NanReturnValue(NanNew<Number>(that->m_pulley_joint->GetCurrentLengthA()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapPulleyJoint, GetCurrentLengthB,
-{
-	NanReturnValue(NanNew<Number>(that->m_pulley_joint->GetCurrentLengthB()));
-})
 
 //// b2MouseJointDef
 
 class WrapMouseJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2MouseJointDef m_mouse_jd;
-	Persistent<Object> m_mouse_jd_target; // m_mouse_jd.target
-
+	Nan::Persistent<v8::Object> m_wrap_target; // m_mouse_jd.target
 private:
 	WrapMouseJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_mouse_jd_target, WrapVec2::NewInstance(m_mouse_jd.target));
+		m_wrap_target.Reset(WrapVec2::NewInstance(m_mouse_jd.target));
 	}
 	~WrapMouseJointDef()
 	{
-		NanDisposePersistent(m_mouse_jd_target);
+		m_wrap_target.Reset();
 	}
-
 public:
+	b2MouseJointDef* Peek() { return &m_mouse_jd; }
+	virtual b2JointDef& GetJointDef() { return m_mouse_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_mouse_jd.target = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_mouse_jd_target))->GetVec2(); // struct copy
+		m_mouse_jd.target = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_target))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_mouse_jd_target))->SetVec2(m_mouse_jd.target);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_target))->SetVec2(m_mouse_jd.target);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_mouse_jd; } // override WrapJointDef
-
+public:
+	static WrapMouseJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapMouseJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapMouseJointDef>(object); }
+	static b2MouseJointDef* Peek(v8::Local<v8::Value> value) { WrapMouseJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2MouseJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, target)
+			NANX_MEMBER_APPLY(prototype_template, maxForce)
+			NANX_MEMBER_APPLY(prototype_template, frequencyHz)
+			NANX_MEMBER_APPLY(prototype_template, dampingRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMouseJointDef* wrap = new WrapMouseJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(target)
-	CLASS_MEMBER_DECLARE(maxForce)
-	CLASS_MEMBER_DECLARE(frequencyHz)
-	CLASS_MEMBER_DECLARE(dampingRatio)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapMouseJointDef* wrap = new WrapMouseJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(target) // m_wrap_target
+	NANX_MEMBER_NUMBER(float32, maxForce)
+	NANX_MEMBER_NUMBER(float32, frequencyHz)
+	NANX_MEMBER_NUMBER(float32, dampingRatio)
 };
-
-Persistent<Function> WrapMouseJointDef::g_constructor;
-
-void WrapMouseJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplMouseJointDef = NanNew<FunctionTemplate>(New);
-	tplMouseJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplMouseJointDef->SetClassName(NanNew<String>("b2MouseJointDef"));
-	tplMouseJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplMouseJointDef, target)
-	CLASS_MEMBER_APPLY(tplMouseJointDef, maxForce)
-	CLASS_MEMBER_APPLY(tplMouseJointDef, frequencyHz)
-	CLASS_MEMBER_APPLY(tplMouseJointDef, dampingRatio)
-	NanAssignPersistent(g_constructor, tplMouseJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2MouseJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapMouseJointDef::New)
-{
-	NanScope();
-	WrapMouseJointDef* that = new WrapMouseJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapMouseJointDef, m_mouse_jd, target					) // m_mouse_jd_target
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMouseJointDef, m_mouse_jd, float32, maxForce		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMouseJointDef, m_mouse_jd, float32, frequencyHz	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMouseJointDef, m_mouse_jd, float32, dampingRatio	)
 
 //// b2MouseJoint
 
 class WrapMouseJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2MouseJoint* m_mouse_joint;
-
 private:
 	WrapMouseJoint() : m_mouse_joint(NULL) {}
 	~WrapMouseJoint() {}
-
 public:
+	b2MouseJoint* Peek() { return m_mouse_joint; }
 	virtual b2Joint* GetJoint() { return m_mouse_joint; } // override WrapJoint
-
-	void SetupObject(WrapMouseJointDef* wrap_mouse_jd, b2MouseJoint* mouse_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapMouseJointDef* wrap_mouse_jd, b2MouseJoint* mouse_joint)
 	{
 		m_mouse_joint = mouse_joint;
-
-		WrapJoint::SetupObject(wrap_mouse_jd);
+		WrapJoint::SetupObject(h_world, wrap_mouse_jd);
 	}
-
 	b2MouseJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2MouseJoint* mouse_joint = m_mouse_joint;
 		m_mouse_joint = NULL;
 		return mouse_joint;
 	}
-
+public:
+	static WrapMouseJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapMouseJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapMouseJoint>(object); }
+	static b2MouseJoint* Peek(v8::Local<v8::Value> value) { WrapMouseJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2MouseJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, SetTarget)
+			NANX_METHOD_APPLY(prototype_template, GetTarget)
+			NANX_METHOD_APPLY(prototype_template, SetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, GetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, SetFrequency)
+			NANX_METHOD_APPLY(prototype_template, GetFrequency)
+			NANX_METHOD_APPLY(prototype_template, SetDampingRatio)
+			NANX_METHOD_APPLY(prototype_template, GetDampingRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMouseJoint* wrap = new WrapMouseJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapMouseJoint* wrap = new WrapMouseJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(SetTarget)
-	CLASS_METHOD_DECLARE(GetTarget)
-	CLASS_METHOD_DECLARE(SetMaxForce)
-	CLASS_METHOD_DECLARE(GetMaxForce)
-	CLASS_METHOD_DECLARE(SetFrequency)
-	CLASS_METHOD_DECLARE(GetFrequency)
-	CLASS_METHOD_DECLARE(SetDampingRatio)
-	CLASS_METHOD_DECLARE(GetDampingRatio)
+	NANX_METHOD(SetTarget)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		WrapVec2* wrap_target = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		wrap->m_mouse_joint->SetTarget(wrap_target->GetVec2());
+	}
+	NANX_METHOD(GetTarget)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_mouse_joint->GetTarget());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetMaxForce)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		wrap->m_mouse_joint->SetMaxForce(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxForce)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_mouse_joint->GetMaxForce()));
+	}
+	NANX_METHOD(SetFrequency)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		wrap->m_mouse_joint->SetFrequency(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetFrequency)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_mouse_joint->GetFrequency()));
+	}
+	NANX_METHOD(SetDampingRatio)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		wrap->m_mouse_joint->SetDampingRatio(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetDampingRatio)
+	{
+		WrapMouseJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_mouse_joint->GetDampingRatio()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapMouseJoint::g_constructor;
-
-void WrapMouseJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplMouseJoint = NanNew<FunctionTemplate>(New);
-	tplMouseJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplMouseJoint->SetClassName(NanNew<String>("b2MouseJoint"));
-	tplMouseJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplMouseJoint, SetTarget)
-	CLASS_METHOD_APPLY(tplMouseJoint, GetTarget)
-	CLASS_METHOD_APPLY(tplMouseJoint, SetMaxForce)
-	CLASS_METHOD_APPLY(tplMouseJoint, GetMaxForce)
-	CLASS_METHOD_APPLY(tplMouseJoint, SetFrequency)
-	CLASS_METHOD_APPLY(tplMouseJoint, GetFrequency)
-	CLASS_METHOD_APPLY(tplMouseJoint, SetDampingRatio)
-	CLASS_METHOD_APPLY(tplMouseJoint, GetDampingRatio)
-	NanAssignPersistent(g_constructor, tplMouseJoint->GetFunction());
-	exports->Set(NanNew<String>("b2MouseJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapMouseJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapMouseJoint::New)
-{
-	NanScope();
-	WrapMouseJoint* that = new WrapMouseJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, SetTarget,
-{
-	WrapVec2* wrap_target = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	that->m_mouse_joint->SetTarget(wrap_target->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, GetTarget,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_mouse_joint->GetTarget());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, SetMaxForce,
-{
-	that->m_mouse_joint->SetMaxForce((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, GetMaxForce,
-{
-	NanReturnValue(NanNew<Number>(that->m_mouse_joint->GetMaxForce()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, SetFrequency,
-{
-	that->m_mouse_joint->SetFrequency((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, GetFrequency,
-{
-	NanReturnValue(NanNew<Number>(that->m_mouse_joint->GetFrequency()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, SetDampingRatio,
-{
-	that->m_mouse_joint->SetDampingRatio((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMouseJoint, GetDampingRatio,
-{
-	NanReturnValue(NanNew<Number>(that->m_mouse_joint->GetDampingRatio()));
-})
 
 //// b2GearJointDef
 
 class WrapGearJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2GearJointDef m_gear_jd;
-	Persistent<Object> m_gear_jd_joint1; // m_gear_jd.joint1
-	Persistent<Object> m_gear_jd_joint2; // m_gear_jd.joint2
-
+	Nan::Persistent<v8::Object> m_wrap_joint1; // m_gear_jd.joint1
+	Nan::Persistent<v8::Object> m_wrap_joint2; // m_gear_jd.joint2
 private:
-	WrapGearJointDef()
-	{
-		// create javascript objects
-	}
+	WrapGearJointDef() {}
 	~WrapGearJointDef()
 	{
-		NanDisposePersistent(m_gear_jd_joint1);
-		NanDisposePersistent(m_gear_jd_joint2);
+		m_wrap_joint1.Reset();
+		m_wrap_joint2.Reset();
 	}
-
 public:
+	b2GearJointDef* Peek() { return & m_gear_jd; }
+	virtual b2JointDef& GetJointDef() { return m_gear_jd; } // override WrapJointDef
+	v8::Local<v8::Object> GetJoint1Handle() { return Nan::New<v8::Object>(m_wrap_joint1); }
+	v8::Local<v8::Object> GetJoint2Handle() { return Nan::New<v8::Object>(m_wrap_joint2); }
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_gear_jd.joint1 = node::ObjectWrap::Unwrap<WrapJoint>(NanNew<Object>(m_gear_jd_joint1))->GetJoint();
-		m_gear_jd.joint2 = node::ObjectWrap::Unwrap<WrapJoint>(NanNew<Object>(m_gear_jd_joint2))->GetJoint();
+		m_gear_jd.joint1 = WrapJoint::Unwrap(Nan::New<v8::Object>(m_wrap_joint1))->GetJoint();
+		m_gear_jd.joint2 = WrapJoint::Unwrap(Nan::New<v8::Object>(m_wrap_joint2))->GetJoint();
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		NanAssignPersistent(m_gear_jd_joint1, NanObjectWrapHandle(WrapJoint::GetWrap(m_gear_jd.joint1)));
-		NanAssignPersistent(m_gear_jd_joint2, NanObjectWrapHandle(WrapJoint::GetWrap(m_gear_jd.joint2)));
+		m_wrap_joint1.Reset(WrapJoint::GetWrap(m_gear_jd.joint1)->handle());
+		m_wrap_joint2.Reset(WrapJoint::GetWrap(m_gear_jd.joint2)->handle());
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_gear_jd; } // override WrapJointDef
-
-	Handle<Object> GetJoint1Handle() { return NanNew<Object>(m_gear_jd_joint1); }
-	Handle<Object> GetJoint2Handle() { return NanNew<Object>(m_gear_jd_joint2); }
-
+public:
+	static WrapGearJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapGearJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapGearJointDef>(object); }
+	static b2GearJointDef* Peek(v8::Local<v8::Value> value) { WrapGearJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2GearJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, joint1)
+			NANX_MEMBER_APPLY(prototype_template, joint2)
+			NANX_MEMBER_APPLY(prototype_template, ratio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapGearJointDef* wrap = new WrapGearJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(joint1)
-	CLASS_MEMBER_DECLARE(joint2)
-	CLASS_MEMBER_DECLARE(ratio)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapGearJointDef* wrap = new WrapGearJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(joint1) // m_wrap_joint1
+	NANX_MEMBER_OBJECT(joint2) // m_wrap_joint2
+	NANX_MEMBER_NUMBER(float32, ratio)
 };
-
-Persistent<Function> WrapGearJointDef::g_constructor;
-
-void WrapGearJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplGearJointDef = NanNew<FunctionTemplate>(New);
-	tplGearJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplGearJointDef->SetClassName(NanNew<String>("b2GearJointDef"));
-	tplGearJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplGearJointDef, joint1)
-	CLASS_MEMBER_APPLY(tplGearJointDef, joint2)
-	CLASS_MEMBER_APPLY(tplGearJointDef, ratio)
-	NanAssignPersistent(g_constructor, tplGearJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2GearJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapGearJointDef::New)
-{
-	NanScope();
-	WrapGearJointDef* that = new WrapGearJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapGearJointDef, m_gear_jd, joint1			) // m_gear_jd_joint1
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapGearJointDef, m_gear_jd, joint2			) // m_gear_jd_joint2
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapGearJointDef, m_gear_jd, float32, ratio	)
 
 //// b2GearJoint
 
 class WrapGearJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2GearJoint* m_gear_joint;
-	Persistent<Object> m_gear_joint_joint1;
-	Persistent<Object> m_gear_joint_joint2;
-
+	Nan::Persistent<v8::Object> m_gear_joint_joint1;
+	Nan::Persistent<v8::Object> m_gear_joint_joint2;
 private:
 	WrapGearJoint() : m_gear_joint(NULL) {}
 	~WrapGearJoint()
 	{
-		NanDisposePersistent(m_gear_joint_joint1);
-		NanDisposePersistent(m_gear_joint_joint2);
+		m_gear_joint_joint1.Reset();
+		m_gear_joint_joint2.Reset();
 	}
-
 public:
+	b2GearJoint* Peek() { return m_gear_joint; }
 	virtual b2Joint* GetJoint() { return m_gear_joint; } // override WrapJoint
-
-	void SetupObject(WrapGearJointDef* wrap_gear_jd, b2GearJoint* gear_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapGearJointDef* wrap_gear_jd, b2GearJoint* gear_joint)
 	{
 		m_gear_joint = gear_joint;
-
-		NanAssignPersistent(m_gear_joint_joint1, NanObjectWrapHandle(WrapJoint::GetWrap(gear_joint->GetJoint1())));
-		NanAssignPersistent(m_gear_joint_joint2, NanObjectWrapHandle(WrapJoint::GetWrap(gear_joint->GetJoint2())));
-
-		WrapJoint::SetupObject(wrap_gear_jd);
+		m_gear_joint_joint1.Reset(WrapJoint::GetWrap(gear_joint->GetJoint1())->handle());
+		m_gear_joint_joint2.Reset(WrapJoint::GetWrap(gear_joint->GetJoint2())->handle());
+		WrapJoint::SetupObject(h_world, wrap_gear_jd);
 	}
-
 	b2GearJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
-		NanDisposePersistent(m_gear_joint_joint1);
-		NanDisposePersistent(m_gear_joint_joint2);
-
+		m_gear_joint_joint1.Reset();
+		m_gear_joint_joint2.Reset();
 		b2GearJoint* gear_joint = m_gear_joint;
 		m_gear_joint = NULL;
 		return gear_joint;
 	}
-
+public:
+	static WrapGearJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapGearJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapGearJoint>(object); }
+	static b2GearJoint* Peek(v8::Local<v8::Value> value) { WrapGearJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2GearJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetJoint1)
+			NANX_METHOD_APPLY(prototype_template, GetJoint2)
+			NANX_METHOD_APPLY(prototype_template, SetRatio)
+			NANX_METHOD_APPLY(prototype_template, GetRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapGearJoint* wrap = new WrapGearJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapGearJoint* wrap = new WrapGearJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetJoint1)
-	CLASS_METHOD_DECLARE(GetJoint2)
-	CLASS_METHOD_DECLARE(SetRatio)
-	CLASS_METHOD_DECLARE(GetRatio)
+	NANX_METHOD(GetJoint1)
+	{
+		WrapGearJoint* wrap = Unwrap(info.This());
+		if (!wrap->m_gear_joint_joint1.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Object>(wrap->m_gear_joint_joint1));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetJoint2)
+	{
+		WrapGearJoint* wrap = Unwrap(info.This());
+		if (!wrap->m_gear_joint_joint2.IsEmpty())
+		{
+			info.GetReturnValue().Set(Nan::New<v8::Object>(wrap->m_gear_joint_joint2));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(SetRatio)
+	{
+		WrapGearJoint* wrap = Unwrap(info.This());
+		wrap->m_gear_joint->SetRatio(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetRatio)
+	{
+		WrapGearJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_gear_joint->GetRatio()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapGearJoint::g_constructor;
-
-void WrapGearJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplGearJoint = NanNew<FunctionTemplate>(New);
-	tplGearJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplGearJoint->SetClassName(NanNew<String>("b2GearJoint"));
-	tplGearJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplGearJoint, GetJoint1)
-	CLASS_METHOD_APPLY(tplGearJoint, GetJoint2)
-	CLASS_METHOD_APPLY(tplGearJoint, SetRatio)
-	CLASS_METHOD_APPLY(tplGearJoint, GetRatio)
-	NanAssignPersistent(g_constructor, tplGearJoint->GetFunction());
-	exports->Set(NanNew<String>("b2GearJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapGearJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapGearJoint::New)
-{
-	NanScope();
-	WrapGearJoint* that = new WrapGearJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapGearJoint, GetJoint1,  
-{
-	if (!that->m_gear_joint_joint1.IsEmpty())
-	{
-		NanReturnValue(NanNew<Object>(that->m_gear_joint_joint1));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapGearJoint, GetJoint2,  
-{
-	if (!that->m_gear_joint_joint2.IsEmpty())
-	{
-		NanReturnValue(NanNew<Object>(that->m_gear_joint_joint2));
-	}
-	else
-	{
-		NanReturnNull();
-	}
-})
-
-CLASS_METHOD_IMPLEMENT(WrapGearJoint, SetRatio, 
-{
-	that->m_gear_joint->SetRatio((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapGearJoint, GetRatio, 
-{
-	NanReturnValue(NanNew<Number>(that->m_gear_joint->GetRatio()));
-})
 
 //// b2WheelJointDef
 
 class WrapWheelJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2WheelJointDef m_wheel_jd;
-	Persistent<Object> m_wheel_jd_localAnchorA; // m_wheel_jd.localAnchorA
-	Persistent<Object> m_wheel_jd_localAnchorB; // m_wheel_jd.localAnchorB
-	Persistent<Object> m_wheel_jd_localAxisA; // m_wheel_jd.localAxisA
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_wheel_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_wheel_jd.localAnchorB
+	Nan::Persistent<v8::Object> m_wrap_localAxisA; // m_wheel_jd.localAxisA
 private:
 	WrapWheelJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_wheel_jd_localAnchorA, WrapVec2::NewInstance(m_wheel_jd.localAnchorA));
-		NanAssignPersistent(m_wheel_jd_localAnchorB, WrapVec2::NewInstance(m_wheel_jd.localAnchorB));
-		NanAssignPersistent(m_wheel_jd_localAxisA, WrapVec2::NewInstance(m_wheel_jd.localAxisA));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_wheel_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_wheel_jd.localAnchorB));
+		m_wrap_localAxisA.Reset(WrapVec2::NewInstance(m_wheel_jd.localAxisA));
 	}
 	~WrapWheelJointDef()
 	{
-		NanDisposePersistent(m_wheel_jd_localAnchorA);
-		NanDisposePersistent(m_wheel_jd_localAnchorB);
-		NanDisposePersistent(m_wheel_jd_localAxisA);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
+		m_wrap_localAxisA.Reset();
 	}
-
 public:
+	b2WheelJointDef* Peek() { return &m_wheel_jd; }
+	virtual b2JointDef& GetJointDef() { return m_wheel_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_wheel_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAnchorA))->GetVec2(); // struct copy
-		m_wheel_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAnchorB))->GetVec2(); // struct copy
-		m_wheel_jd.localAxisA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAxisA))->GetVec2(); // struct copy
+		m_wheel_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_wheel_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
+		m_wheel_jd.localAxisA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAxisA))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAnchorA))->SetVec2(m_wheel_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAnchorB))->SetVec2(m_wheel_jd.localAnchorB);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_wheel_jd_localAxisA))->SetVec2(m_wheel_jd.localAxisA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_wheel_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_wheel_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAxisA))->SetVec2(m_wheel_jd.localAxisA);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_wheel_jd; } // override WrapJointDef
-
+public:
+	static WrapWheelJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWheelJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWheelJointDef>(object); }
+	static b2WheelJointDef* Peek(v8::Local<v8::Value> value) { WrapWheelJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2WheelJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, localAxisA)
+			NANX_MEMBER_APPLY(prototype_template, enableMotor)
+			NANX_MEMBER_APPLY(prototype_template, maxMotorTorque)
+			NANX_MEMBER_APPLY(prototype_template, motorSpeed)
+			NANX_MEMBER_APPLY(prototype_template, frequencyHz)
+			NANX_MEMBER_APPLY(prototype_template, dampingRatio)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWheelJointDef* wrap = new WrapWheelJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(localAxisA)
-	CLASS_MEMBER_DECLARE(enableMotor)
-	CLASS_MEMBER_DECLARE(maxMotorTorque)
-	CLASS_MEMBER_DECLARE(motorSpeed)
-	CLASS_MEMBER_DECLARE(frequencyHz)
-	CLASS_MEMBER_DECLARE(dampingRatio)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapWheelJointDef* wrap = new WrapWheelJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_OBJECT(localAxisA) // m_wrap_localAxisA
+	NANX_MEMBER_BOOLEAN(bool, enableMotor)
+	NANX_MEMBER_NUMBER(float32, maxMotorTorque)
+	NANX_MEMBER_NUMBER(float32, motorSpeed)
+	NANX_MEMBER_NUMBER(float32, frequencyHz)
+	NANX_MEMBER_NUMBER(float32, dampingRatio)
+	NANX_METHOD(Initialize)
+	{
+		WrapWheelJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchor = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapVec2* wrap_axis = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[3]));
+		wrap->SyncPull();
+		wrap->m_wheel_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchor->GetVec2(), wrap_axis->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapWheelJointDef::g_constructor;
-
-void WrapWheelJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWheelJointDef = NanNew<FunctionTemplate>(New);
-	tplWheelJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplWheelJointDef->SetClassName(NanNew<String>("b2WheelJointDef"));
-	tplWheelJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplWheelJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, localAxisA)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, enableMotor)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, maxMotorTorque)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, motorSpeed)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, frequencyHz)
-	CLASS_MEMBER_APPLY(tplWheelJointDef, dampingRatio)
-	CLASS_METHOD_APPLY(tplWheelJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplWheelJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2WheelJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapWheelJointDef::New)
-{
-	NanScope();
-	WrapWheelJointDef* that = new WrapWheelJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWheelJointDef, m_wheel_jd, localAnchorA			) // m_wheel_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWheelJointDef, m_wheel_jd, localAnchorB			) // m_wheel_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWheelJointDef, m_wheel_jd, localAxisA				) // m_wheel_jd_localAxisA
-CLASS_MEMBER_IMPLEMENT_BOOLEAN	(WrapWheelJointDef, m_wheel_jd, bool, enableMotor		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWheelJointDef, m_wheel_jd, float32, maxMotorTorque	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWheelJointDef, m_wheel_jd, float32, motorSpeed		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWheelJointDef, m_wheel_jd, float32, frequencyHz	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWheelJointDef, m_wheel_jd, float32, dampingRatio	)
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchor = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	WrapVec2* wrap_axis = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[3]));
-	that->SyncPull();
-	that->m_wheel_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchor->GetVec2(), wrap_axis->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2WheelJoint
 
 class WrapWheelJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2WheelJoint* m_wheel_joint;
-
 private:
 	WrapWheelJoint() : m_wheel_joint(NULL) {}
 	~WrapWheelJoint() {}
-
 public:
+	b2WheelJoint* Peek() { return m_wheel_joint; }
 	virtual b2Joint* GetJoint() { return m_wheel_joint; } // override WrapJoint
-
-	void SetupObject(WrapWheelJointDef* wrap_wheel_jd, b2WheelJoint* wheel_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapWheelJointDef* wrap_wheel_jd, b2WheelJoint* wheel_joint)
 	{
 		m_wheel_joint = wheel_joint;
-
-		WrapJoint::SetupObject(wrap_wheel_jd);
+		WrapJoint::SetupObject(h_world, wrap_wheel_jd);
 	}
-
 	b2WheelJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2WheelJoint* wheel_joint = m_wheel_joint;
 		m_wheel_joint = NULL;
 		return wheel_joint;
 	}
-
+public:
+	static WrapWheelJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWheelJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWheelJoint>(object); }
+	static b2WheelJoint* Peek(v8::Local<v8::Value> value) { WrapWheelJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2WheelJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAxisA)
+			NANX_METHOD_APPLY(prototype_template, GetJointTranslation)
+			NANX_METHOD_APPLY(prototype_template, GetJointSpeed)
+			NANX_METHOD_APPLY(prototype_template, IsMotorEnabled)
+			NANX_METHOD_APPLY(prototype_template, EnableMotor)
+			NANX_METHOD_APPLY(prototype_template, SetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, GetMotorSpeed)
+			NANX_METHOD_APPLY(prototype_template, SetMaxMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMaxMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMotorTorque)
+			NANX_METHOD_APPLY(prototype_template, SetSpringFrequencyHz)
+			NANX_METHOD_APPLY(prototype_template, GetSpringFrequencyHz)
+			NANX_METHOD_APPLY(prototype_template, SetSpringDampingRatio)
+			NANX_METHOD_APPLY(prototype_template, GetSpringDampingRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWheelJoint* wrap = new WrapWheelJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapWheelJoint* wrap = new WrapWheelJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(GetLocalAxisA)
-	CLASS_METHOD_DECLARE(GetJointTranslation)
-	CLASS_METHOD_DECLARE(GetJointSpeed)
-	CLASS_METHOD_DECLARE(IsMotorEnabled)
-	CLASS_METHOD_DECLARE(EnableMotor)
-	CLASS_METHOD_DECLARE(SetMotorSpeed)
-	CLASS_METHOD_DECLARE(GetMotorSpeed)
-	CLASS_METHOD_DECLARE(SetMaxMotorTorque)
-	CLASS_METHOD_DECLARE(GetMaxMotorTorque)
-	CLASS_METHOD_DECLARE(GetMotorTorque)
-	CLASS_METHOD_DECLARE(SetSpringFrequencyHz)
-	CLASS_METHOD_DECLARE(GetSpringFrequencyHz)
-	CLASS_METHOD_DECLARE(SetSpringDampingRatio)
-	CLASS_METHOD_DECLARE(GetSpringDampingRatio)
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_wheel_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_wheel_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAxisA)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_wheel_joint->GetLocalAxisA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetJointTranslation)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetJointTranslation()));
+	}
+	NANX_METHOD(GetJointSpeed)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetJointSpeed()));
+	}
+	NANX_METHOD(IsMotorEnabled)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->IsMotorEnabled()));
+	}
+	NANX_METHOD(EnableMotor)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		wrap->m_wheel_joint->EnableMotor(NANX_bool(info[0]));
+	}
+	NANX_METHOD(SetMotorSpeed)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		wrap->m_wheel_joint->SetMotorSpeed(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMotorSpeed)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetMotorSpeed()));
+	}
+	NANX_METHOD(SetMaxMotorTorque)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		wrap->m_wheel_joint->SetMaxMotorTorque(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxMotorTorque)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetMaxMotorTorque()));
+	}
+	NANX_METHOD(GetMotorTorque)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetMotorTorque(NANX_float32(info[0]))));
+	}
+	NANX_METHOD(SetSpringFrequencyHz)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		wrap->m_wheel_joint->SetSpringFrequencyHz(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetSpringFrequencyHz)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetSpringFrequencyHz()));
+	}
+	NANX_METHOD(SetSpringDampingRatio)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		wrap->m_wheel_joint->SetSpringDampingRatio(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetSpringDampingRatio)
+	{
+		WrapWheelJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_wheel_joint->GetSpringDampingRatio()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapWheelJoint::g_constructor;
-
-void WrapWheelJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWheelJoint = NanNew<FunctionTemplate>(New);
-	tplWheelJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplWheelJoint->SetClassName(NanNew<String>("b2WheelJoint"));
-	tplWheelJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplWheelJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetLocalAxisA)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetJointTranslation)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetJointSpeed)
-	CLASS_METHOD_APPLY(tplWheelJoint, IsMotorEnabled)
-	CLASS_METHOD_APPLY(tplWheelJoint, EnableMotor)
-	CLASS_METHOD_APPLY(tplWheelJoint, SetMotorSpeed)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetMotorSpeed)
-	CLASS_METHOD_APPLY(tplWheelJoint, SetMaxMotorTorque)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetMaxMotorTorque)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetMotorTorque)
-	CLASS_METHOD_APPLY(tplWheelJoint, SetSpringFrequencyHz)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetSpringFrequencyHz)
-	CLASS_METHOD_APPLY(tplWheelJoint, SetSpringDampingRatio)
-	CLASS_METHOD_APPLY(tplWheelJoint, GetSpringDampingRatio)
-	NanAssignPersistent(g_constructor, tplWheelJoint->GetFunction());
-	exports->Set(NanNew<String>("b2WheelJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapWheelJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapWheelJoint::New)
-{
-	NanScope();
-	WrapWheelJoint* that = new WrapWheelJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_wheel_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_wheel_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetLocalAxisA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_wheel_joint->GetLocalAxisA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetJointTranslation,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetJointTranslation()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetJointSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetJointSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, IsMotorEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_wheel_joint->IsMotorEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, EnableMotor,
-{
-	that->m_wheel_joint->EnableMotor(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, SetMotorSpeed,
-{
-	that->m_wheel_joint->SetMotorSpeed((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetMotorSpeed,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetMotorSpeed()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, SetMaxMotorTorque,
-{
-	that->m_wheel_joint->SetMaxMotorTorque((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetMaxMotorTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetMaxMotorTorque()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetMotorTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetMotorTorque((float32) args[0]->NumberValue())));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, SetSpringFrequencyHz,
-{
-	that->m_wheel_joint->SetSpringFrequencyHz((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetSpringFrequencyHz,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetSpringFrequencyHz()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, SetSpringDampingRatio,
-{
-	that->m_wheel_joint->SetSpringDampingRatio((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWheelJoint, GetSpringDampingRatio,
-{
-	NanReturnValue(NanNew<Number>(that->m_wheel_joint->GetSpringDampingRatio()));
-})
 
 //// b2WeldJointDef
 
 class WrapWeldJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2WeldJointDef m_weld_jd;
-	Persistent<Object> m_weld_jd_localAnchorA; // m_weld_jd.localAnchorA
-	Persistent<Object> m_weld_jd_localAnchorB; // m_weld_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_weld_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_weld_jd.localAnchorB
 private:
 	WrapWeldJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_weld_jd_localAnchorA, WrapVec2::NewInstance(m_weld_jd.localAnchorA));
-		NanAssignPersistent(m_weld_jd_localAnchorB, WrapVec2::NewInstance(m_weld_jd.localAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_weld_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_weld_jd.localAnchorB));
 	}
 	~WrapWeldJointDef()
 	{
-		NanDisposePersistent(m_weld_jd_localAnchorA);
-		NanDisposePersistent(m_weld_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2WeldJointDef* Peek() { return &m_weld_jd; }
+	virtual b2JointDef& GetJointDef() { return m_weld_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_weld_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_weld_jd_localAnchorA))->GetVec2(); // struct copy
-		m_weld_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_weld_jd_localAnchorB))->GetVec2(); // struct copy
+		m_weld_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_weld_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_weld_jd_localAnchorA))->SetVec2(m_weld_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_weld_jd_localAnchorB))->SetVec2(m_weld_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_weld_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_weld_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_weld_jd; } // override WrapJointDef
-
+public:
+	static WrapWeldJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWeldJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWeldJointDef>(object); }
+	static b2WeldJointDef* Peek(v8::Local<v8::Value> value) { WrapWeldJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2WeldJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, referenceAngle)
+			NANX_MEMBER_APPLY(prototype_template, frequencyHz)
+			NANX_MEMBER_APPLY(prototype_template, dampingRatio)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWeldJointDef* wrap = new WrapWeldJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(referenceAngle)
-	CLASS_MEMBER_DECLARE(frequencyHz)
-	CLASS_MEMBER_DECLARE(dampingRatio)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapWeldJointDef* wrap = new WrapWeldJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER(float32, referenceAngle)
+	NANX_MEMBER_NUMBER(float32, frequencyHz)
+	NANX_MEMBER_NUMBER(float32, dampingRatio)
+	NANX_METHOD(Initialize)
+	{
+		WrapWeldJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchor = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		wrap->SyncPull();
+		wrap->m_weld_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchor->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapWeldJointDef::g_constructor;
-
-void WrapWeldJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWeldJointDef = NanNew<FunctionTemplate>(New);
-	tplWeldJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplWeldJointDef->SetClassName(NanNew<String>("b2WeldJointDef"));
-	tplWeldJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplWeldJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplWeldJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplWeldJointDef, referenceAngle)
-	CLASS_MEMBER_APPLY(tplWeldJointDef, frequencyHz)
-	CLASS_MEMBER_APPLY(tplWeldJointDef, dampingRatio)
-	CLASS_METHOD_APPLY(tplWeldJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplWeldJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2WeldJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapWeldJointDef::New)
-{
-	NanScope();
-	WrapWeldJointDef* that = new WrapWeldJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWeldJointDef, m_weld_jd, localAnchorA				) // m_weld_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWeldJointDef, m_weld_jd, localAnchorB				) // m_weld_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWeldJointDef, m_weld_jd, float32, referenceAngle	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWeldJointDef, m_weld_jd, float32, frequencyHz		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapWeldJointDef, m_weld_jd, float32, dampingRatio		)
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchor = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	that->SyncPull();
-	that->m_weld_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchor->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2WeldJoint
 
 class WrapWeldJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2WeldJoint* m_weld_joint;
-
 private:
 	WrapWeldJoint() : m_weld_joint(NULL) {}
 	~WrapWeldJoint() {}
-
 public:
+	b2WeldJoint* Peek() { return m_weld_joint; }
 	virtual b2Joint* GetJoint() { return m_weld_joint; } // override WrapJoint
-
-	void SetupObject(WrapWeldJointDef* wrap_weld_jd, b2WeldJoint* weld_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapWeldJointDef* wrap_weld_jd, b2WeldJoint* weld_joint)
 	{
 		m_weld_joint = weld_joint;
-
-		WrapJoint::SetupObject(wrap_weld_jd);
+		WrapJoint::SetupObject(h_world, wrap_weld_jd);
 	}
-
 	b2WeldJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2WeldJoint* weld_joint = m_weld_joint;
 		m_weld_joint = NULL;
 		return weld_joint;
 	}
-
+public:
+	static WrapWeldJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWeldJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWeldJoint>(object); }
+	static b2WeldJoint* Peek(v8::Local<v8::Value> value) { WrapWeldJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2WeldJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, GetReferenceAngle)
+			NANX_METHOD_APPLY(prototype_template, SetFrequency)
+			NANX_METHOD_APPLY(prototype_template, GetFrequency)
+			NANX_METHOD_APPLY(prototype_template, SetDampingRatio)
+			NANX_METHOD_APPLY(prototype_template, GetDampingRatio)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWeldJoint* wrap = new WrapWeldJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapWeldJoint* wrap = new WrapWeldJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(GetReferenceAngle)
-	CLASS_METHOD_DECLARE(SetFrequency)
-	CLASS_METHOD_DECLARE(GetFrequency)
-	CLASS_METHOD_DECLARE(SetDampingRatio)
-	CLASS_METHOD_DECLARE(GetDampingRatio)
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_weld_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_weld_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetReferenceAngle)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_weld_joint->GetReferenceAngle()));
+	}
+	NANX_METHOD(SetFrequency)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		wrap->m_weld_joint->SetFrequency(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetFrequency)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_weld_joint->GetFrequency()));
+	}
+	NANX_METHOD(SetDampingRatio)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		wrap->m_weld_joint->SetDampingRatio(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetDampingRatio)
+	{
+		WrapWeldJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_weld_joint->GetDampingRatio()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapWeldJoint::g_constructor;
-
-void WrapWeldJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWeldJoint = NanNew<FunctionTemplate>(New);
-	tplWeldJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplWeldJoint->SetClassName(NanNew<String>("b2WeldJoint"));
-	tplWeldJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplWeldJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplWeldJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplWeldJoint, GetReferenceAngle)
-	CLASS_METHOD_APPLY(tplWeldJoint, SetFrequency)
-	CLASS_METHOD_APPLY(tplWeldJoint, GetFrequency)
-	CLASS_METHOD_APPLY(tplWeldJoint, SetDampingRatio)
-	CLASS_METHOD_APPLY(tplWeldJoint, GetDampingRatio)
-	NanAssignPersistent(g_constructor, tplWeldJoint->GetFunction());
-	exports->Set(NanNew<String>("b2WeldJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapWeldJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapWeldJoint::New)
-{
-	NanScope();
-	WrapWeldJoint* that = new WrapWeldJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_weld_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_weld_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, GetReferenceAngle,
-{
-	NanReturnValue(NanNew<Number>(that->m_weld_joint->GetReferenceAngle()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, SetFrequency,
-{
-	that->m_weld_joint->SetFrequency((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, GetFrequency,
-{
-	NanReturnValue(NanNew<Number>(that->m_weld_joint->GetFrequency()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, SetDampingRatio,
-{
-	that->m_weld_joint->SetDampingRatio((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWeldJoint, GetDampingRatio,
-{
-	NanReturnValue(NanNew<Number>(that->m_weld_joint->GetDampingRatio()));
-})
 
 //// b2FrictionJointDef
 
 class WrapFrictionJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2FrictionJointDef m_friction_jd;
-	Persistent<Object> m_friction_jd_localAnchorA; // m_friction_jd.localAnchorA
-	Persistent<Object> m_friction_jd_localAnchorB; // m_friction_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_friction_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_friction_jd.localAnchorB
 private:
 	WrapFrictionJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_friction_jd_localAnchorA, WrapVec2::NewInstance(m_friction_jd.localAnchorA));
-		NanAssignPersistent(m_friction_jd_localAnchorB, WrapVec2::NewInstance(m_friction_jd.localAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_friction_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_friction_jd.localAnchorB));
 	}
 	~WrapFrictionJointDef()
 	{
-		NanDisposePersistent(m_friction_jd_localAnchorA);
-		NanDisposePersistent(m_friction_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2FrictionJointDef* Peek() { return &m_friction_jd; }
+	virtual b2JointDef& GetJointDef() { return m_friction_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_friction_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_friction_jd_localAnchorA))->GetVec2(); // struct copy
-		m_friction_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_friction_jd_localAnchorB))->GetVec2(); // struct copy
+		m_friction_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_friction_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_friction_jd_localAnchorA))->SetVec2(m_friction_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_friction_jd_localAnchorB))->SetVec2(m_friction_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_friction_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_friction_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_friction_jd; } // override WrapJointDef
-
+public:
+	static WrapFrictionJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapFrictionJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapFrictionJointDef>(object); }
+	static b2FrictionJointDef* Peek(v8::Local<v8::Value> value) { WrapFrictionJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2FrictionJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, maxForce)
+			NANX_MEMBER_APPLY(prototype_template, maxTorque)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapFrictionJointDef* wrap = new WrapFrictionJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(maxForce)
-	CLASS_MEMBER_DECLARE(maxTorque)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapFrictionJointDef* wrap = new WrapFrictionJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER(float32, maxForce)
+	NANX_MEMBER_NUMBER(float32, maxTorque)
+	NANX_METHOD(Initialize)
+	{
+		WrapFrictionJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* wrap_anchor = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		wrap->SyncPull();
+		wrap->m_friction_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek(), wrap_anchor->GetVec2());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapFrictionJointDef::g_constructor;
-
-void WrapFrictionJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplFrictionJointDef = NanNew<FunctionTemplate>(New);
-	tplFrictionJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplFrictionJointDef->SetClassName(NanNew<String>("b2FrictionJointDef"));
-	tplFrictionJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplFrictionJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplFrictionJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplFrictionJointDef, maxForce)
-	CLASS_MEMBER_APPLY(tplFrictionJointDef, maxTorque)
-	CLASS_METHOD_APPLY(tplFrictionJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplFrictionJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2FrictionJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapFrictionJointDef::New)
-{
-	NanScope();
-	WrapFrictionJointDef* that = new WrapFrictionJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapFrictionJointDef, m_friction_jd, localAnchorA			) // m_friction_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapFrictionJointDef, m_friction_jd, localAnchorB			) // m_friction_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapFrictionJointDef, m_friction_jd, float32, maxForce		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapFrictionJointDef, m_friction_jd, float32, maxTorque	)
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	WrapVec2* wrap_anchor = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	that->SyncPull();
-	that->m_friction_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody(), wrap_anchor->GetVec2());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2FrictionJoint
 
 class WrapFrictionJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2FrictionJoint* m_friction_joint;
-
 private:
 	WrapFrictionJoint() : m_friction_joint(NULL) {}
 	~WrapFrictionJoint() {}
-
 public:
+	b2FrictionJoint* Peek() { return m_friction_joint; }
 	virtual b2Joint* GetJoint() { return m_friction_joint; } // override WrapJoint
-
-	void SetupObject(WrapFrictionJointDef* wrap_friction_jd, b2FrictionJoint* friction_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapFrictionJointDef* wrap_friction_jd, b2FrictionJoint* friction_joint)
 	{
 		m_friction_joint = friction_joint;
-
-		WrapJoint::SetupObject(wrap_friction_jd);
+		WrapJoint::SetupObject(h_world, wrap_friction_jd);
 	}
-
 	b2FrictionJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2FrictionJoint* friction_joint = m_friction_joint;
 		m_friction_joint = NULL;
 		return friction_joint;
 	}
-
+public:
+	static WrapFrictionJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapFrictionJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapFrictionJoint>(object); }
+	static b2FrictionJoint* Peek(v8::Local<v8::Value> value) { WrapFrictionJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2FrictionJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, SetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, GetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, SetMaxTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMaxTorque)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapFrictionJoint* wrap = new WrapFrictionJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapFrictionJoint* wrap = new WrapFrictionJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(SetMaxForce)
-	CLASS_METHOD_DECLARE(GetMaxForce)
-	CLASS_METHOD_DECLARE(SetMaxTorque)
-	CLASS_METHOD_DECLARE(GetMaxTorque)
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_friction_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_friction_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetMaxForce)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		wrap->m_friction_joint->SetMaxForce(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxForce)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_friction_joint->GetMaxForce()));
+	}
+	NANX_METHOD(SetMaxTorque)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		wrap->m_friction_joint->SetMaxTorque(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxTorque)
+	{
+		WrapFrictionJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_friction_joint->GetMaxTorque()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapFrictionJoint::g_constructor;
-
-void WrapFrictionJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplFrictionJoint = NanNew<FunctionTemplate>(New);
-	tplFrictionJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplFrictionJoint->SetClassName(NanNew<String>("b2FrictionJoint"));
-	tplFrictionJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplFrictionJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplFrictionJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplFrictionJoint, SetMaxForce)
-	CLASS_METHOD_APPLY(tplFrictionJoint, GetMaxForce)
-	CLASS_METHOD_APPLY(tplFrictionJoint, SetMaxTorque)
-	CLASS_METHOD_APPLY(tplFrictionJoint, GetMaxTorque)
-	NanAssignPersistent(g_constructor, tplFrictionJoint->GetFunction());
-	exports->Set(NanNew<String>("b2FrictionJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapFrictionJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapFrictionJoint::New)
-{
-	NanScope();
-	WrapFrictionJoint* that = new WrapFrictionJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_friction_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_friction_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, SetMaxForce,
-{
-	that->m_friction_joint->SetMaxForce((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, GetMaxForce,
-{
-	NanReturnValue(NanNew<Number>(that->m_friction_joint->GetMaxForce()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, SetMaxTorque,
-{
-	that->m_friction_joint->SetMaxTorque((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapFrictionJoint, GetMaxTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_friction_joint->GetMaxTorque()));
-})
 
 //// b2RopeJointDef
 
 class WrapRopeJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2RopeJointDef m_rope_jd;
-	Persistent<Object> m_rope_jd_localAnchorA; // m_rope_jd.localAnchorA
-	Persistent<Object> m_rope_jd_localAnchorB; // m_rope_jd.localAnchorB
-
+	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_rope_jd.localAnchorA
+	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_rope_jd.localAnchorB
 private:
 	WrapRopeJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_rope_jd_localAnchorA, WrapVec2::NewInstance(m_rope_jd.localAnchorA));
-		NanAssignPersistent(m_rope_jd_localAnchorB, WrapVec2::NewInstance(m_rope_jd.localAnchorB));
+		m_wrap_localAnchorA.Reset(WrapVec2::NewInstance(m_rope_jd.localAnchorA));
+		m_wrap_localAnchorB.Reset(WrapVec2::NewInstance(m_rope_jd.localAnchorB));
 	}
 	~WrapRopeJointDef()
 	{
-		NanDisposePersistent(m_rope_jd_localAnchorA);
-		NanDisposePersistent(m_rope_jd_localAnchorB);
+		m_wrap_localAnchorA.Reset();
+		m_wrap_localAnchorB.Reset();
 	}
-
 public:
+	b2RopeJointDef* Peek() { return &m_rope_jd; }
+	virtual b2JointDef& GetJointDef() { return m_rope_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_rope_jd.localAnchorA = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_rope_jd_localAnchorA))->GetVec2(); // struct copy
-		m_rope_jd.localAnchorB = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_rope_jd_localAnchorB))->GetVec2(); // struct copy
+		m_rope_jd.localAnchorA = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->GetVec2(); // struct copy
+		m_rope_jd.localAnchorB = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_rope_jd_localAnchorA))->SetVec2(m_rope_jd.localAnchorA);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_rope_jd_localAnchorB))->SetVec2(m_rope_jd.localAnchorB);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorA))->SetVec2(m_rope_jd.localAnchorA);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localAnchorB))->SetVec2(m_rope_jd.localAnchorB);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_rope_jd; } // override WrapJointDef
-
+public:
+	static WrapRopeJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapRopeJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapRopeJointDef>(object); }
+	static b2RopeJointDef* Peek(v8::Local<v8::Value> value) { WrapRopeJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2RopeJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localAnchorA)
+			NANX_MEMBER_APPLY(prototype_template, localAnchorB)
+			NANX_MEMBER_APPLY(prototype_template, maxLength)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapRopeJointDef* wrap = new WrapRopeJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localAnchorA)
-	CLASS_MEMBER_DECLARE(localAnchorB)
-	CLASS_MEMBER_DECLARE(maxLength)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapRopeJointDef* wrap = new WrapRopeJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(localAnchorA) // m_wrap_localAnchorA
+	NANX_MEMBER_OBJECT(localAnchorB) // m_wrap_localAnchorB
+	NANX_MEMBER_NUMBER(float32, maxLength)
 };
-
-Persistent<Function> WrapRopeJointDef::g_constructor;
-
-void WrapRopeJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplRopeJointDef = NanNew<FunctionTemplate>(New);
-	tplRopeJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplRopeJointDef->SetClassName(NanNew<String>("b2RopeJointDef"));
-	tplRopeJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplRopeJointDef, localAnchorA)
-	CLASS_MEMBER_APPLY(tplRopeJointDef, localAnchorB)
-	CLASS_MEMBER_APPLY(tplRopeJointDef, maxLength)
-	NanAssignPersistent(g_constructor, tplRopeJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2RopeJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapRopeJointDef::New)
-{
-	NanScope();
-	WrapRopeJointDef* that = new WrapRopeJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapRopeJointDef, m_rope_jd, localAnchorA			) // m_rope_jd_localAnchorA
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapRopeJointDef, m_rope_jd, localAnchorB			) // m_rope_jd_localAnchorB
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapRopeJointDef, m_rope_jd, float32, maxLength	)
 
 //// b2RopeJoint
 
 class WrapRopeJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2RopeJoint* m_rope_joint;
-
 private:
 	WrapRopeJoint() : m_rope_joint(NULL) {}
 	~WrapRopeJoint() {}
-
 public:
+	b2RopeJoint* Peek() { return m_rope_joint; }
 	virtual b2Joint* GetJoint() { return m_rope_joint; } // override WrapJoint
-
-	void SetupObject(WrapRopeJointDef* wrap_rope_jd, b2RopeJoint* rope_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapRopeJointDef* wrap_rope_jd, b2RopeJoint* rope_joint)
 	{
 		m_rope_joint = rope_joint;
-
-		WrapJoint::SetupObject(wrap_rope_jd);
+		WrapJoint::SetupObject(h_world, wrap_rope_jd);
 	}
-
 	b2RopeJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2RopeJoint* rope_joint = m_rope_joint;
 		m_rope_joint = NULL;
 		return rope_joint;
 	}
-
+public:
+	static WrapRopeJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapRopeJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapRopeJoint>(object); }
+	static b2RopeJoint* Peek(v8::Local<v8::Value> value) { WrapRopeJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2RopeJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorA)
+			NANX_METHOD_APPLY(prototype_template, GetLocalAnchorB)
+			NANX_METHOD_APPLY(prototype_template, SetMaxLength)
+			NANX_METHOD_APPLY(prototype_template, GetMaxLength)
+			NANX_METHOD_APPLY(prototype_template, GetLimitState)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapRopeJoint* wrap = new WrapRopeJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapRopeJoint* wrap = new WrapRopeJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(GetLocalAnchorA)
-	CLASS_METHOD_DECLARE(GetLocalAnchorB)
-	CLASS_METHOD_DECLARE(SetMaxLength)
-	CLASS_METHOD_DECLARE(GetMaxLength)
-	CLASS_METHOD_DECLARE(GetLimitState)
+	NANX_METHOD(GetLocalAnchorA)
+	{
+		WrapRopeJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_rope_joint->GetLocalAnchorA());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(GetLocalAnchorB)
+	{
+		WrapRopeJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_rope_joint->GetLocalAnchorB());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetMaxLength)
+	{
+		WrapRopeJoint* wrap = Unwrap(info.This());
+		wrap->m_rope_joint->SetMaxLength(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxLength)
+	{
+		WrapRopeJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_rope_joint->GetMaxLength()));
+	}
+	NANX_METHOD(GetLimitState)
+	{
+		WrapRopeJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_rope_joint->GetLimitState()));
+	}
 ///	void Dump();
 };
-
-Persistent<Function> WrapRopeJoint::g_constructor;
-
-void WrapRopeJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplRopeJoint = NanNew<FunctionTemplate>(New);
-	tplRopeJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplRopeJoint->SetClassName(NanNew<String>("b2RopeJoint"));
-	tplRopeJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplRopeJoint, GetLocalAnchorA)
-	CLASS_METHOD_APPLY(tplRopeJoint, GetLocalAnchorB)
-	CLASS_METHOD_APPLY(tplRopeJoint, SetMaxLength)
-	CLASS_METHOD_APPLY(tplRopeJoint, GetMaxLength)
-	CLASS_METHOD_APPLY(tplRopeJoint, GetLimitState)
-	NanAssignPersistent(g_constructor, tplRopeJoint->GetFunction());
-	exports->Set(NanNew<String>("b2RopeJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapRopeJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapRopeJoint::New)
-{
-	NanScope();
-	WrapRopeJoint* that = new WrapRopeJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapRopeJoint, GetLocalAnchorA,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_rope_joint->GetLocalAnchorA());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRopeJoint, GetLocalAnchorB,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_rope_joint->GetLocalAnchorB());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRopeJoint, SetMaxLength,
-{
-	that->m_rope_joint->SetMaxLength((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRopeJoint, GetMaxLength,
-{
-	NanReturnValue(NanNew<Number>(that->m_rope_joint->GetMaxLength()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapRopeJoint, GetLimitState,
-{
-	NanReturnValue(NanNew<Integer>(that->m_rope_joint->GetLimitState()));
-})
 
 //// b2MotorJointDef
 
 class WrapMotorJointDef : public WrapJointDef
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-
-private:
 	b2MotorJointDef m_motor_jd;
-	Persistent<Object> m_motor_jd_linearOffset; // m_motor_jd.linearOffset
-
+	Nan::Persistent<v8::Object> m_wrap_linearOffset; // m_motor_jd.linearOffset
 private:
 	WrapMotorJointDef()
 	{
-		// create javascript objects
-		NanAssignPersistent(m_motor_jd_linearOffset, WrapVec2::NewInstance(m_motor_jd.linearOffset));
+		m_wrap_linearOffset.Reset(WrapVec2::NewInstance(m_motor_jd.linearOffset));
 	}
 	~WrapMotorJointDef()
 	{
-		NanDisposePersistent(m_motor_jd_linearOffset);
+		m_wrap_linearOffset.Reset();
 	}
-
 public:
+	b2MotorJointDef* Peek() { return &m_motor_jd; }
+	virtual b2JointDef& GetJointDef() { return m_motor_jd; } // override WrapJointDef
 	virtual void SyncPull() // override WrapJointDef
 	{
 		// sync: pull data from javascript objects
 		WrapJointDef::SyncPull();
-		m_motor_jd.linearOffset = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_motor_jd_linearOffset))->GetVec2(); // struct copy
+		m_motor_jd.linearOffset = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearOffset))->GetVec2(); // struct copy
 	}
-
 	virtual void SyncPush() // override WrapJointDef
 	{
 		// sync: push data into javascript objects
 		WrapJointDef::SyncPush();
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_motor_jd_linearOffset))->SetVec2(m_motor_jd.linearOffset);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearOffset))->SetVec2(m_motor_jd.linearOffset);
 	}
-
-	virtual b2JointDef& GetJointDef() { return m_motor_jd; } // override WrapJointDef
-
+public:
+	static WrapMotorJointDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapMotorJointDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapMotorJointDef>(object); }
+	static b2MotorJointDef* Peek(v8::Local<v8::Value> value) { WrapMotorJointDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2MotorJointDef"));
+			function_template->Inherit(WrapJointDef::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, linearOffset)
+			NANX_MEMBER_APPLY(prototype_template, angularOffset)
+			NANX_MEMBER_APPLY(prototype_template, maxForce)
+			NANX_MEMBER_APPLY(prototype_template, maxTorque)
+			NANX_MEMBER_APPLY(prototype_template, correctionFactor)
+			NANX_METHOD_APPLY(prototype_template, Initialize)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMotorJointDef* wrap = new WrapMotorJointDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(linearOffset)
-	CLASS_MEMBER_DECLARE(angularOffset)
-	CLASS_MEMBER_DECLARE(maxForce)
-	CLASS_MEMBER_DECLARE(maxTorque)
-	CLASS_MEMBER_DECLARE(correctionFactor)
-
-	CLASS_METHOD_DECLARE(Initialize)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapMotorJointDef* wrap = new WrapMotorJointDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(linearOffset) // m_wrap_linearOffset
+	NANX_MEMBER_NUMBER(float32, angularOffset)
+	NANX_MEMBER_NUMBER(float32, maxForce)
+	NANX_MEMBER_NUMBER(float32, maxTorque)
+	NANX_MEMBER_NUMBER(float32, correctionFactor)
+	NANX_METHOD(Initialize)
+	{
+		WrapMotorJointDef* wrap = Unwrap(info.This());
+		WrapBody* wrap_bodyA = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		WrapBody* wrap_bodyB = WrapBody::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		wrap->SyncPull();
+		wrap->m_motor_jd.Initialize(wrap_bodyA->Peek(), wrap_bodyB->Peek());
+		wrap->SyncPush();
+	}
 };
-
-Persistent<Function> WrapMotorJointDef::g_constructor;
-
-void WrapMotorJointDef::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplMotorJointDef = NanNew<FunctionTemplate>(New);
-	tplMotorJointDef->Inherit(NanNew<FunctionTemplate>(WrapJointDef::g_constructor_template));
-	tplMotorJointDef->SetClassName(NanNew<String>("b2MotorJointDef"));
-	tplMotorJointDef->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplMotorJointDef, linearOffset)
-	CLASS_MEMBER_APPLY(tplMotorJointDef, angularOffset)
-	CLASS_MEMBER_APPLY(tplMotorJointDef, maxForce)
-	CLASS_MEMBER_APPLY(tplMotorJointDef, maxTorque)
-	CLASS_MEMBER_APPLY(tplMotorJointDef, correctionFactor)
-	CLASS_METHOD_APPLY(tplMotorJointDef, Initialize)
-	NanAssignPersistent(g_constructor, tplMotorJointDef->GetFunction());
-	exports->Set(NanNew<String>("b2MotorJointDef"), NanNew<Function>(g_constructor));
-}
-
-NAN_METHOD(WrapMotorJointDef::New)
-{
-	NanScope();
-	WrapMotorJointDef* that = new WrapMotorJointDef();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapMotorJointDef, m_motor_jd, linearOffset				) // m_motor_jd_linearOffset
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMotorJointDef, m_motor_jd, float32, angularOffset		)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMotorJointDef, m_motor_jd, float32, maxForce			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMotorJointDef, m_motor_jd, float32, maxTorque			)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapMotorJointDef, m_motor_jd, float32, correctionFactor	)
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJointDef, Initialize,
-{
-	WrapBody* wrap_bodyA = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[0]));
-	WrapBody* wrap_bodyB = node::ObjectWrap::Unwrap<WrapBody>(Local<Object>::Cast(args[1]));
-	that->SyncPull();
-	that->m_motor_jd.Initialize(wrap_bodyA->GetBody(), wrap_bodyB->GetBody());
-	that->SyncPush();
-	NanReturnUndefined();
-})
 
 //// b2MotorJoint
 
 class WrapMotorJoint : public WrapJoint
 {
 private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-
-private:
 	b2MotorJoint* m_motor_joint;
-
 private:
 	WrapMotorJoint() : m_motor_joint(NULL) {}
 	~WrapMotorJoint() {}
-
 public:
+	b2MotorJoint* Peek() { return m_motor_joint; }
 	virtual b2Joint* GetJoint() { return m_motor_joint; } // override WrapJoint
-
-	void SetupObject(WrapMotorJointDef* wrap_motor_jd, b2MotorJoint* motor_joint)
+	void SetupObject(v8::Local<v8::Object> h_world, WrapMotorJointDef* wrap_motor_jd, b2MotorJoint* motor_joint)
 	{
 		m_motor_joint = motor_joint;
-
-		WrapJoint::SetupObject(wrap_motor_jd);
+		WrapJoint::SetupObject(h_world, wrap_motor_jd);
 	}
-
 	b2MotorJoint* ResetObject()
 	{
 		WrapJoint::ResetObject();
-
 		b2MotorJoint* motor_joint = m_motor_joint;
 		m_motor_joint = NULL;
 		return motor_joint;
 	}
-
+public:
+	static WrapMotorJoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapMotorJoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapMotorJoint>(object); }
+	static b2MotorJoint* Peek(v8::Local<v8::Value> value) { WrapMotorJoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2MotorJoint"));
+			function_template->Inherit(WrapJoint::GetFunctionTemplate());
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, SetLinearOffset)
+			NANX_METHOD_APPLY(prototype_template, GetLinearOffset)
+			NANX_METHOD_APPLY(prototype_template, SetAngularOffset)
+			NANX_METHOD_APPLY(prototype_template, GetAngularOffset)
+			NANX_METHOD_APPLY(prototype_template, SetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, GetMaxForce)
+			NANX_METHOD_APPLY(prototype_template, SetMaxTorque)
+			NANX_METHOD_APPLY(prototype_template, GetMaxTorque)
+			NANX_METHOD_APPLY(prototype_template, SetCorrectionFactor)
+			NANX_METHOD_APPLY(prototype_template, GetCorrectionFactor)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapMotorJoint* wrap = new WrapMotorJoint();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapMotorJoint* wrap = new WrapMotorJoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
 ///	b2Vec2 GetAnchorA() const;
 ///	b2Vec2 GetAnchorB() const;
 ///	b2Vec2 GetReactionForce(float32 inv_dt) const;
 ///	float32 GetReactionTorque(float32 inv_dt) const;
-	CLASS_METHOD_DECLARE(SetLinearOffset)
-	CLASS_METHOD_DECLARE(GetLinearOffset)
-	CLASS_METHOD_DECLARE(SetAngularOffset)
-	CLASS_METHOD_DECLARE(GetAngularOffset)
-	CLASS_METHOD_DECLARE(SetMaxForce)
-	CLASS_METHOD_DECLARE(GetMaxForce)
-	CLASS_METHOD_DECLARE(SetMaxTorque)
-	CLASS_METHOD_DECLARE(GetMaxTorque)
-	CLASS_METHOD_DECLARE(SetCorrectionFactor)
-	CLASS_METHOD_DECLARE(GetCorrectionFactor)
+	NANX_METHOD(SetLinearOffset)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		wrap->m_motor_joint->SetLinearOffset(WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]))->GetVec2());
+	}
+	NANX_METHOD(GetLinearOffset)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> out = info[0]->IsUndefined() ? WrapVec2::NewInstance() : v8::Local<v8::Object>::Cast(info[0]);
+		WrapVec2::Unwrap(out)->SetVec2(wrap->m_motor_joint->GetLinearOffset());
+		info.GetReturnValue().Set(out);
+	}
+	NANX_METHOD(SetAngularOffset)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		wrap->m_motor_joint->SetAngularOffset(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetAngularOffset)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_motor_joint->GetAngularOffset()));
+	}
+	NANX_METHOD(SetMaxForce)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		wrap->m_motor_joint->SetMaxForce(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxForce)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_motor_joint->GetMaxForce()));
+	}
+	NANX_METHOD(SetMaxTorque)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		wrap->m_motor_joint->SetMaxTorque(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetMaxTorque)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_motor_joint->GetMaxTorque()));
+	}
+	NANX_METHOD(SetCorrectionFactor)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		wrap->m_motor_joint->SetCorrectionFactor(NANX_float32(info[0]));
+	}
+	NANX_METHOD(GetCorrectionFactor)
+	{
+		WrapMotorJoint* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_motor_joint->GetCorrectionFactor()));
+	}
 ///	void Dump();
 };
 
-Persistent<Function> WrapMotorJoint::g_constructor;
-
-void WrapMotorJoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplMotorJoint = NanNew<FunctionTemplate>(New);
-	tplMotorJoint->Inherit(NanNew<FunctionTemplate>(WrapJoint::g_constructor_template));
-	tplMotorJoint->SetClassName(NanNew<String>("b2MotorJoint"));
-	tplMotorJoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplMotorJoint, SetLinearOffset)
-	CLASS_METHOD_APPLY(tplMotorJoint, GetLinearOffset)
-	CLASS_METHOD_APPLY(tplMotorJoint, SetAngularOffset)
-	CLASS_METHOD_APPLY(tplMotorJoint, GetAngularOffset)
-	CLASS_METHOD_APPLY(tplMotorJoint, SetMaxForce)
-	CLASS_METHOD_APPLY(tplMotorJoint, GetMaxForce)
-	CLASS_METHOD_APPLY(tplMotorJoint, SetMaxTorque)
-	CLASS_METHOD_APPLY(tplMotorJoint, GetMaxTorque)
-	CLASS_METHOD_APPLY(tplMotorJoint, SetCorrectionFactor)
-	CLASS_METHOD_APPLY(tplMotorJoint, GetCorrectionFactor)
-	NanAssignPersistent(g_constructor, tplMotorJoint->GetFunction());
-	exports->Set(NanNew<String>("b2MotorJoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapMotorJoint::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapMotorJoint::New)
-{
-	NanScope();
-	WrapMotorJoint* that = new WrapMotorJoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, SetLinearOffset,
-{
-	that->m_motor_joint->SetLinearOffset(node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]))->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, GetLinearOffset,
-{
-	Local<Object> out = args[0]->IsUndefined() ? NanNew<Object>(WrapVec2::NewInstance()) : Local<Object>::Cast(args[0]);
-	node::ObjectWrap::Unwrap<WrapVec2>(out)->SetVec2(that->m_motor_joint->GetLinearOffset());
-	NanReturnValue(out);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, SetAngularOffset,
-{
-	that->m_motor_joint->SetAngularOffset((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, GetAngularOffset,
-{
-	NanReturnValue(NanNew<Number>(that->m_motor_joint->GetAngularOffset()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, SetMaxForce,
-{
-	that->m_motor_joint->SetMaxForce((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, GetMaxForce,
-{
-	NanReturnValue(NanNew<Number>(that->m_motor_joint->GetMaxForce()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, SetMaxTorque,
-{
-	that->m_motor_joint->SetMaxTorque((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, GetMaxTorque,
-{
-	NanReturnValue(NanNew<Number>(that->m_motor_joint->GetMaxTorque()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, SetCorrectionFactor,
-{
-	that->m_motor_joint->SetCorrectionFactor((float32) args[0]->NumberValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapMotorJoint, GetCorrectionFactor,
-{
-	NanReturnValue(NanNew<Number>(that->m_motor_joint->GetCorrectionFactor()));
-})
-
 //// b2ContactID
 
-class WrapContactID : public node::ObjectWrap
+class WrapContactID : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance(const b2ContactID& contact_id);
-
 public:
 	b2ContactID m_contact_id;
-
 private:
 	WrapContactID() {}
 	~WrapContactID() {}
-
+public:
+	b2ContactID* Peek() { return &m_contact_id; }
+public:
+	static WrapContactID* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapContactID* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapContactID>(object); }
+	static b2ContactID* Peek(v8::Local<v8::Value> value) { WrapContactID* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ContactID"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			//NANX_MEMBER_APPLY(prototype_template, cf) // TODO
+			NANX_MEMBER_APPLY(prototype_template, key)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2ContactID& contact_id)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapContactID* wrap = new WrapContactID();
+		wrap->m_contact_id = contact_id;
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-//	CLASS_MEMBER_DECLARE(cf) // TODO
-	CLASS_MEMBER_DECLARE(key)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapContactID* wrap = new WrapContactID();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	//NANX_MEMBER_OBJECT(cf) // TODO
+	NANX_MEMBER_UINT32(uint32, key)
 };
-
-Persistent<Function> WrapContactID::g_constructor;
-
-void WrapContactID::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplContactID = NanNew<FunctionTemplate>(New);
-	tplContactID->SetClassName(NanNew<String>("b2ContactID"));
-	tplContactID->InstanceTemplate()->SetInternalFieldCount(1);
-//	CLASS_MEMBER_APPLY(tplContactID, cf) // TODO
-	CLASS_MEMBER_APPLY(tplContactID, key)
-	NanAssignPersistent(g_constructor, tplContactID->GetFunction());
-	exports->Set(NanNew<String>("b2ContactID"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapContactID::NewInstance(const b2ContactID& contact_id)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapContactID* wrap_contact_id = node::ObjectWrap::Unwrap<WrapContactID>(instance);
-	wrap_contact_id->m_contact_id = contact_id;
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapContactID::New)
-{
-	NanScope();
-	WrapContactID* that = new WrapContactID();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-//CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapContactID, m_contact_id, cf			) // TODO
-CLASS_MEMBER_IMPLEMENT_UINT32	(WrapContactID, m_contact_id, uint32, key	)
 
 //// b2ManifoldPoint
 
-class WrapManifoldPoint : public node::ObjectWrap
+class WrapManifoldPoint : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance(const b2ManifoldPoint& manifold_point);
-
 public:
 	b2ManifoldPoint m_manifold_point;
-	Persistent<Object> m_manifold_point_localPoint;	// m_manifold_point.localPoint
-	Persistent<Object> m_manifold_point_id;			// m_manifold_point.id
-
+	Nan::Persistent<v8::Object> m_wrap_localPoint;	// m_manifold_point.localPoint
+	Nan::Persistent<v8::Object> m_wrap_id;			// m_manifold_point.id
 private:
 	WrapManifoldPoint()
 	{
-		NanAssignPersistent(m_manifold_point_localPoint, WrapVec2::NewInstance(m_manifold_point.localPoint));
-		NanAssignPersistent(m_manifold_point_id, WrapContactID::NewInstance(m_manifold_point.id));
+		m_wrap_localPoint.Reset(WrapVec2::NewInstance(m_manifold_point.localPoint));
+		m_wrap_id.Reset(WrapContactID::NewInstance(m_manifold_point.id));
 	}
 	~WrapManifoldPoint()
 	{
-		NanDisposePersistent(m_manifold_point_localPoint);
-		NanDisposePersistent(m_manifold_point_id);
+		m_wrap_localPoint.Reset();
+		m_wrap_id.Reset();
 	}
-
 public:
+	b2ManifoldPoint* Peek() { return &m_manifold_point; }
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		m_manifold_point.localPoint = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_point_localPoint))->GetVec2(); // struct copy
-		m_manifold_point.id = node::ObjectWrap::Unwrap<WrapContactID>(NanNew<Object>(m_manifold_point_id))->m_contact_id;
+		m_manifold_point.localPoint = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localPoint))->GetVec2(); // struct copy
+		m_manifold_point.id = WrapContactID::Unwrap(Nan::New<v8::Object>(m_wrap_id))->m_contact_id;
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_point_localPoint))->SetVec2(m_manifold_point.localPoint);
-		node::ObjectWrap::Unwrap<WrapContactID>(NanNew<Object>(m_manifold_point_id))->m_contact_id = m_manifold_point.id;
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localPoint))->SetVec2(m_manifold_point.localPoint);
+		WrapContactID::Unwrap(Nan::New<v8::Object>(m_wrap_id))->m_contact_id = m_manifold_point.id;
 	}
-
+public:
+	static WrapManifoldPoint* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapManifoldPoint* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapManifoldPoint>(object); }
+	static b2ManifoldPoint* Peek(v8::Local<v8::Value> value) { WrapManifoldPoint* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ManifoldPoint"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, localPoint)
+			NANX_MEMBER_APPLY(prototype_template, normalImpulse)
+			NANX_MEMBER_APPLY(prototype_template, tangentImpulse)
+			NANX_MEMBER_APPLY(prototype_template, id)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2ManifoldPoint& manifold_point)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapManifoldPoint* wrap = new WrapManifoldPoint();
+		wrap->m_manifold_point = manifold_point; // struct copy
+		wrap->SyncPush();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(localPoint)
-	CLASS_MEMBER_DECLARE(normalImpulse)
-	CLASS_MEMBER_DECLARE(tangentImpulse)
-	CLASS_MEMBER_DECLARE(id)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapManifoldPoint* wrap = new WrapManifoldPoint();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(localPoint) // m_wrap_localPoint
+	NANX_MEMBER_NUMBER(float32, normalImpulse)
+	NANX_MEMBER_NUMBER(float32, tangentImpulse)
+	NANX_MEMBER_OBJECT(id) // m_wrap_id
 };
-
-Persistent<Function> WrapManifoldPoint::g_constructor;
-
-void WrapManifoldPoint::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplManifoldPoint = NanNew<FunctionTemplate>(New);
-	tplManifoldPoint->SetClassName(NanNew<String>("b2ManifoldPoint"));
-	tplManifoldPoint->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplManifoldPoint, localPoint)
-	CLASS_MEMBER_APPLY(tplManifoldPoint, normalImpulse)
-	CLASS_MEMBER_APPLY(tplManifoldPoint, tangentImpulse)
-	CLASS_MEMBER_APPLY(tplManifoldPoint, id)
-	NanAssignPersistent(g_constructor, tplManifoldPoint->GetFunction());
-	exports->Set(NanNew<String>("b2ManifoldPoint"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapManifoldPoint::NewInstance(const b2ManifoldPoint& manifold_point)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapManifoldPoint* wrap_manifold_point = node::ObjectWrap::Unwrap<WrapManifoldPoint>(instance);
-	wrap_manifold_point->m_manifold_point = manifold_point; // struct copy
-	wrap_manifold_point->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapManifoldPoint::New)
-{
-	NanScope();
-	WrapManifoldPoint* that = new WrapManifoldPoint();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapManifoldPoint, m_manifold_point, localPoint				) // m_manifold_point_localPoint
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapManifoldPoint, m_manifold_point, float32, normalImpulse	)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapManifoldPoint, m_manifold_point, float32, tangentImpulse	)
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapManifoldPoint, m_manifold_point, id						) // m_manifold_point_id
 
 //// b2Manifold
 
-class WrapManifold : public node::ObjectWrap
+class WrapManifold : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Manifold& manifold);
-
 public:
 	b2Manifold m_manifold;
-	Persistent<Array> m_manifold_points;		// m_manifold.points
-	Persistent<Object> m_manifold_localNormal;	// m_manifold.localNormal
-	Persistent<Object> m_manifold_localPoint;	// m_manifold.localPoint
-
+	Nan::Persistent<v8::Array> m_wrap_points;		// m_manifold.points
+	Nan::Persistent<v8::Object> m_wrap_localNormal;	// m_manifold.localNormal
+	Nan::Persistent<v8::Object> m_wrap_localPoint;	// m_manifold.localPoint
 private:
 	WrapManifold()
 	{
-		NanScope();
-
-		NanAssignPersistent(m_manifold_points, NanNew<Array>(b2_maxManifoldPoints));
-		NanAssignPersistent(m_manifold_localNormal, WrapVec2::NewInstance(m_manifold.localNormal));
-		NanAssignPersistent(m_manifold_localPoint, WrapVec2::NewInstance(m_manifold.localPoint));
-
-		Local<Array> manifold_points = NanNew<Array>(m_manifold_points);
+		m_wrap_points.Reset(Nan::New<v8::Array>(b2_maxManifoldPoints));
+		m_wrap_localNormal.Reset(WrapVec2::NewInstance(m_manifold.localNormal));
+		m_wrap_localPoint.Reset(WrapVec2::NewInstance(m_manifold.localPoint));
+		v8::Local<v8::Array> manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < manifold_points->Length(); ++i)
 		{
 			manifold_points->Set(i, WrapManifoldPoint::NewInstance(m_manifold.points[i]));
@@ -5770,584 +5869,1647 @@ private:
 	}
 	~WrapManifold()
 	{
-		NanDisposePersistent(m_manifold_points);
-		NanDisposePersistent(m_manifold_localNormal);
-		NanDisposePersistent(m_manifold_localPoint);
+		m_wrap_points.Reset();
+		m_wrap_localNormal.Reset();
+		m_wrap_localPoint.Reset();
 	}
-
 public:
+	b2Manifold* Peek() { return &m_manifold; }
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		NanScope();
-		Local<Array> manifold_points = NanNew<Array>(m_manifold_points);
+		v8::Local<v8::Array> manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < manifold_points->Length(); ++i)
 		{
-			WrapManifoldPoint* wrap_manifold_point = node::ObjectWrap::Unwrap<WrapManifoldPoint>(Local<Object>::Cast(manifold_points->Get(i)));
+			WrapManifoldPoint* wrap_manifold_point = WrapManifoldPoint::Unwrap(v8::Local<v8::Object>::Cast(manifold_points->Get(i)));
 			m_manifold.points[i] = wrap_manifold_point->m_manifold_point; // struct copy
 			wrap_manifold_point->SyncPull();
 		}
-		m_manifold.localNormal = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_localNormal))->GetVec2(); // struct copy
-		m_manifold.localPoint = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_localPoint))->GetVec2(); // struct copy
+		m_manifold.localNormal = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localNormal))->GetVec2(); // struct copy
+		m_manifold.localPoint = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localPoint))->GetVec2(); // struct copy
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		NanScope();
-		Local<Array> manifold_points = NanNew<Array>(m_manifold_points);
+		v8::Local<v8::Array> manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < manifold_points->Length(); ++i)
 		{
-			WrapManifoldPoint* wrap_manifold_point = node::ObjectWrap::Unwrap<WrapManifoldPoint>(Local<Object>::Cast(manifold_points->Get(i)));
+			WrapManifoldPoint* wrap_manifold_point = WrapManifoldPoint::Unwrap(v8::Local<v8::Object>::Cast(manifold_points->Get(i)));
 			wrap_manifold_point->m_manifold_point = m_manifold.points[i]; // struct copy
 			wrap_manifold_point->SyncPush();
 		}
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_localNormal))->SetVec2(m_manifold.localNormal);
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_manifold_localPoint))->SetVec2(m_manifold.localPoint);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localNormal))->SetVec2(m_manifold.localNormal);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_localPoint))->SetVec2(m_manifold.localPoint);
 	}
-
+public:
+	static WrapManifold* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapManifold* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapManifold>(object); }
+	static b2Manifold* Peek(v8::Local<v8::Value> value) { WrapManifold* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2Manifold"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, points)
+			NANX_MEMBER_APPLY(prototype_template, localNormal)
+			NANX_MEMBER_APPLY(prototype_template, localPoint)
+			NANX_MEMBER_APPLY(prototype_template, type)
+			NANX_MEMBER_APPLY(prototype_template, pointCount)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapManifold* wrap = new WrapManifold();
+		wrap->Wrap(instance);
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Manifold& manifold)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapManifold* wrap = new WrapManifold();
+		wrap->Wrap(instance);
+		wrap->m_manifold = manifold; // struct copy
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(points)
-	CLASS_MEMBER_DECLARE(localNormal)
-	CLASS_MEMBER_DECLARE(localPoint)
-	CLASS_MEMBER_DECLARE(type)
-	CLASS_MEMBER_DECLARE(pointCount)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapManifold* wrap = new WrapManifold();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_ARRAY(points) // m_wrap_points
+	NANX_MEMBER_OBJECT(localNormal) // m_wrap_localNormal
+	NANX_MEMBER_OBJECT(localPoint) // m_wrap_localPoint
+	NANX_MEMBER_INTEGER(b2Manifold::Type, type)
+	NANX_MEMBER_INTEGER(int32, pointCount)
 };
-
-Persistent<Function> WrapManifold::g_constructor;
-
-void WrapManifold::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplManifold = NanNew<FunctionTemplate>(New);
-	tplManifold->SetClassName(NanNew<String>("b2Manifold"));
-	tplManifold->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplManifold, points)
-	CLASS_MEMBER_APPLY(tplManifold, localNormal)
-	CLASS_MEMBER_APPLY(tplManifold, localPoint)
-	CLASS_MEMBER_APPLY(tplManifold, type)
-	CLASS_MEMBER_APPLY(tplManifold, pointCount)
-	NanAssignPersistent(g_constructor, tplManifold->GetFunction());
-	exports->Set(NanNew<String>("b2Manifold"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapManifold::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapManifold* wrap_manifold = node::ObjectWrap::Unwrap<WrapManifold>(instance);
-	wrap_manifold->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapManifold::NewInstance(const b2Manifold& manifold)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapManifold* wrap_manifold = node::ObjectWrap::Unwrap<WrapManifold>(instance);
-	wrap_manifold->m_manifold = manifold; // struct copy
-	wrap_manifold->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapManifold::New)
-{
-	NanScope();
-	WrapManifold* that = new WrapManifold();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapManifold, m_manifold, points					) // m_manifold_points
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapManifold, m_manifold, localNormal				) // m_manifold_localNormal
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapManifold, m_manifold, localPoint				) // m_manifold_localPoint
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapManifold, m_manifold, b2Manifold::Type, type	)
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapManifold, m_manifold, int32, pointCount		)
 
 //// b2WorldManifold
 
-class WrapWorldManifold : public node::ObjectWrap
+class WrapWorldManifold : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2WorldManifold& world_manifold);
-
 public:
 	b2WorldManifold m_world_manifold;
-	Persistent<Object> m_world_manifold_normal;		// m_world_manifold.normal
-	Persistent<Array> m_world_manifold_points;		// m_world_manifold.points
-	Persistent<Array> m_world_manifold_separations;	// m_world_manifold.separations
-
+	Nan::Persistent<v8::Object> m_wrap_normal;		// m_world_manifold.normal
+	Nan::Persistent<v8::Array> m_wrap_points;		// m_world_manifold.points
+	Nan::Persistent<v8::Array> m_wrap_separations;	// m_world_manifold.separations
 private:
 	WrapWorldManifold()
 	{
-		NanScope();
-
-		NanAssignPersistent(m_world_manifold_normal, WrapVec2::NewInstance(m_world_manifold.normal));
-		NanAssignPersistent(m_world_manifold_points, NanNew<Array>(b2_maxManifoldPoints));
-		NanAssignPersistent(m_world_manifold_separations, NanNew<Array>(b2_maxManifoldPoints));
-
-		Local<Array> world_manifold_points = NanNew<Array>(m_world_manifold_points);
+		m_wrap_normal.Reset(WrapVec2::NewInstance(m_world_manifold.normal));
+		m_wrap_points.Reset(Nan::New<v8::Array>(b2_maxManifoldPoints));
+		m_wrap_separations.Reset(Nan::New<v8::Array>(b2_maxManifoldPoints));
+		v8::Local<v8::Array> world_manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < world_manifold_points->Length(); ++i)
 		{
 			world_manifold_points->Set(i, WrapVec2::NewInstance(m_world_manifold.points[i]));
 		}
-		Local<Array> world_manifold_separations = NanNew<Array>(m_world_manifold_separations);
+		v8::Local<v8::Array> world_manifold_separations = Nan::New<v8::Array>(m_wrap_separations);
 		for (uint32_t i = 0; i < world_manifold_separations->Length(); ++i)
 		{
-			world_manifold_separations->Set(i, NanNew<Number>(m_world_manifold.separations[i]));
+			world_manifold_separations->Set(i, Nan::New(m_world_manifold.separations[i]));
 		}
 	}
 	~WrapWorldManifold()
 	{
-		NanDisposePersistent(m_world_manifold_normal);
-		NanDisposePersistent(m_world_manifold_points);
-		NanDisposePersistent(m_world_manifold_separations);
+		m_wrap_normal.Reset();
+		m_wrap_points.Reset();
+		m_wrap_separations.Reset();
 	}
-
 public:
+	b2WorldManifold* Peek() { return &m_world_manifold; }
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		NanScope();
-		m_world_manifold.normal = node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_world_manifold_normal))->GetVec2(); // struct copy
-		Local<Array> world_manifold_points = NanNew<Array>(m_world_manifold_points);
+		m_world_manifold.normal = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_normal))->GetVec2(); // struct copy
+		v8::Local<v8::Array> world_manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < world_manifold_points->Length(); ++i)
 		{
-			m_world_manifold.points[i] = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(world_manifold_points->Get(i)))->GetVec2(); // struct copy
+			m_world_manifold.points[i] = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(world_manifold_points->Get(i)))->GetVec2(); // struct copy
 		}
-		Local<Array> world_manifold_separations = NanNew<Array>(m_world_manifold_separations);
+		v8::Local<v8::Array> world_manifold_separations = Nan::New<v8::Array>(m_wrap_separations);
 		for (uint32_t i = 0; i < world_manifold_separations->Length(); ++i)
 		{
-			m_world_manifold.separations[i] = (float32) world_manifold_separations->Get(i)->NumberValue();
+			m_world_manifold.separations[i] = NANX_float32(world_manifold_separations->Get(i));
 		}
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		node::ObjectWrap::Unwrap<WrapVec2>(NanNew<Object>(m_world_manifold_normal))->SetVec2(m_world_manifold.normal);
-		Local<Array> world_manifold_points = NanNew<Array>(m_world_manifold_points);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_normal))->SetVec2(m_world_manifold.normal);
+		v8::Local<v8::Array> world_manifold_points = Nan::New<v8::Array>(m_wrap_points);
 		for (uint32_t i = 0; i < world_manifold_points->Length(); ++i)
 		{
-			node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(world_manifold_points->Get(i)))->SetVec2(m_world_manifold.points[i]);
+			WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(world_manifold_points->Get(i)))->SetVec2(m_world_manifold.points[i]);
 		}
-		Local<Array> world_manifold_separations = NanNew<Array>(m_world_manifold_separations);
+		v8::Local<v8::Array> world_manifold_separations = Nan::New<v8::Array>(m_wrap_separations);
 		for (uint32_t i = 0; i < world_manifold_separations->Length(); ++i)
 		{
-			world_manifold_separations->Set(i, NanNew<Number>(m_world_manifold.separations[i]));
+			world_manifold_separations->Set(i, Nan::New(m_world_manifold.separations[i]));
 		}
 	}
-
+public:
+	static WrapWorldManifold* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWorldManifold* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWorldManifold>(object); }
+	static b2WorldManifold* Peek(v8::Local<v8::Value> value) { WrapWorldManifold* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2WorldManifold"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, normal)
+			NANX_MEMBER_APPLY(prototype_template, points)
+			NANX_MEMBER_APPLY(prototype_template, separations)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWorldManifold* wrap = new WrapWorldManifold();
+		wrap->Wrap(instance);
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2WorldManifold& world_manifold)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWorldManifold* wrap = new WrapWorldManifold();
+		wrap->Wrap(instance);
+		wrap->m_world_manifold = world_manifold; // struct copy
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(normal)
-	CLASS_MEMBER_DECLARE(points)
-	CLASS_MEMBER_DECLARE(separations)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapWorldManifold* wrap = new WrapWorldManifold();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_OBJECT(normal) // m_wrap_normal
+	NANX_MEMBER_ARRAY(points) // m_wrap_points
+	NANX_MEMBER_ARRAY(separations) // m_wrap_separations
 };
-
-Persistent<Function> WrapWorldManifold::g_constructor;
-
-void WrapWorldManifold::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWorldManifold = NanNew<FunctionTemplate>(New);
-	tplWorldManifold->SetClassName(NanNew<String>("b2WorldManifold"));
-	tplWorldManifold->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplWorldManifold, normal)
-	CLASS_MEMBER_APPLY(tplWorldManifold, points)
-	CLASS_MEMBER_APPLY(tplWorldManifold, separations)
-	NanAssignPersistent(g_constructor, tplWorldManifold->GetFunction());
-	exports->Set(NanNew<String>("b2WorldManifold"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapWorldManifold::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapWorldManifold* wrap_world_manifold = node::ObjectWrap::Unwrap<WrapWorldManifold>(instance);
-	wrap_world_manifold->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapWorldManifold::NewInstance(const b2WorldManifold& world_manifold)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapWorldManifold* wrap_world_manifold = node::ObjectWrap::Unwrap<WrapWorldManifold>(instance);
-	wrap_world_manifold->m_world_manifold = world_manifold; // struct copy
-	wrap_world_manifold->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapWorldManifold::New)
-{
-	NanScope();
-	WrapWorldManifold* that = new WrapWorldManifold();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_OBJECT	(WrapWorldManifold, m_world_manifold, normal		) // m_world_manifold_normal
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapWorldManifold, m_world_manifold, points		) // m_world_manifold_points
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapWorldManifold, m_world_manifold, separations	) // m_world_manifold_separations
 
 //// b2Contact
 
-class WrapContact : public node::ObjectWrap
+class WrapContact : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance(b2Contact* contact);
-
 public:
 	b2Contact* m_contact;
-
 private:
 	WrapContact() : m_contact(NULL) {}
 	~WrapContact() { m_contact = NULL; }
-
+public:
+	b2Contact* Peek() { return m_contact; }
+public:
+	static WrapContact* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapContact* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapContact>(object); }
+	static b2Contact* Peek(v8::Local<v8::Value> value) { WrapContact* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2Contact"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetManifold)
+			NANX_METHOD_APPLY(prototype_template, GetWorldManifold)
+			NANX_METHOD_APPLY(prototype_template, IsTouching)
+			NANX_METHOD_APPLY(prototype_template, SetEnabled)
+			NANX_METHOD_APPLY(prototype_template, IsEnabled)
+			NANX_METHOD_APPLY(prototype_template, GetNext)
+			NANX_METHOD_APPLY(prototype_template, GetFixtureA)
+			NANX_METHOD_APPLY(prototype_template, GetChildIndexA)
+			NANX_METHOD_APPLY(prototype_template, GetFixtureB)
+			NANX_METHOD_APPLY(prototype_template, GetChildIndexB)
+			NANX_METHOD_APPLY(prototype_template, SetFriction)
+			NANX_METHOD_APPLY(prototype_template, GetFriction)
+			NANX_METHOD_APPLY(prototype_template, ResetFriction)
+			NANX_METHOD_APPLY(prototype_template, SetRestitution)
+			NANX_METHOD_APPLY(prototype_template, GetRestitution)
+			NANX_METHOD_APPLY(prototype_template, ResetRestitution)
+			NANX_METHOD_APPLY(prototype_template, SetTangentSpeed)
+			NANX_METHOD_APPLY(prototype_template, GetTangentSpeed)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapContact* wrap = new WrapContact();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(b2Contact* contact)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapContact* wrap = new WrapContact();
+		wrap->Wrap(instance);
+		wrap->m_contact = contact; // struct copy
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_METHOD_DECLARE(GetManifold)
-	CLASS_METHOD_DECLARE(GetWorldManifold)
-	CLASS_METHOD_DECLARE(IsTouching)
-	CLASS_METHOD_DECLARE(SetEnabled)
-	CLASS_METHOD_DECLARE(IsEnabled)
-	CLASS_METHOD_DECLARE(GetNext)
-	CLASS_METHOD_DECLARE(GetFixtureA)
-	CLASS_METHOD_DECLARE(GetChildIndexA)
-	CLASS_METHOD_DECLARE(GetFixtureB)
-	CLASS_METHOD_DECLARE(GetChildIndexB)
-	CLASS_METHOD_DECLARE(SetFriction)
-	CLASS_METHOD_DECLARE(GetFriction)
-	CLASS_METHOD_DECLARE(ResetFriction)
-	CLASS_METHOD_DECLARE(SetRestitution)
-	CLASS_METHOD_DECLARE(GetRestitution)
-	CLASS_METHOD_DECLARE(ResetRestitution)
-	CLASS_METHOD_DECLARE(SetTangentSpeed)
-	CLASS_METHOD_DECLARE(GetTangentSpeed)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapContact* wrap = new WrapContact();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(GetManifold)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		const b2Manifold* manifold = wrap->m_contact->GetManifold();
+		info.GetReturnValue().Set(WrapManifold::NewInstance(*manifold));
+	}
+	NANX_METHOD(GetWorldManifold)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		WrapWorldManifold* wrap_world_manifold = WrapWorldManifold::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		wrap->m_contact->GetWorldManifold(&wrap_world_manifold->m_world_manifold);
+		wrap_world_manifold->SyncPush();
+	}
+	NANX_METHOD(IsTouching)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_contact->IsTouching()));
+	}
+	NANX_METHOD(SetEnabled)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		wrap->m_contact->SetEnabled(NANX_bool(info[0]));
+	}
+	NANX_METHOD(IsEnabled)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_contact->IsEnabled()));
+	}
+	NANX_METHOD(GetNext)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		b2Contact* contact = wrap->m_contact->GetNext();
+		if (contact)
+		{
+			info.GetReturnValue().Set(WrapContact::NewInstance(contact));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetFixtureA)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		b2Fixture* fixture = wrap->m_contact->GetFixtureA();
+		// get fixture internal data
+		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+		info.GetReturnValue().Set(wrap_fixture->handle());
+	}
+	NANX_METHOD(GetChildIndexA)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_contact->GetChildIndexA()));
+	}
+	NANX_METHOD(GetFixtureB)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		b2Fixture* fixture = wrap->m_contact->GetFixtureB();
+		// get fixture internal data
+		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+		info.GetReturnValue().Set(wrap_fixture->handle());
+	}
+	NANX_METHOD(GetChildIndexB)
+	{
+		WrapContact* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_contact->GetChildIndexB()));
+	}
+	NANX_METHOD(SetFriction) { WrapContact* wrap = Unwrap(info.This()); wrap->m_contact->SetFriction(NANX_float32(info[0])); }
+	NANX_METHOD(GetFriction) { WrapContact* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_contact->GetFriction())); }
+	NANX_METHOD(ResetFriction) { WrapContact* wrap = Unwrap(info.This()); wrap->m_contact->ResetFriction(); }
+	NANX_METHOD(SetRestitution) { WrapContact* wrap = Unwrap(info.This()); wrap->m_contact->SetRestitution(NANX_float32(info[0])); }
+	NANX_METHOD(GetRestitution) { WrapContact* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_contact->GetRestitution())); }
+	NANX_METHOD(ResetRestitution) { WrapContact* wrap = Unwrap(info.This()); wrap->m_contact->ResetRestitution(); }
+	NANX_METHOD(SetTangentSpeed) { WrapContact* wrap = Unwrap(info.This()); wrap->m_contact->SetTangentSpeed(NANX_float32(info[0])); }
+	NANX_METHOD(GetTangentSpeed) { WrapContact* wrap = Unwrap(info.This()); info.GetReturnValue().Set(Nan::New(wrap->m_contact->GetTangentSpeed())); }
 //	virtual void Evaluate(b2Manifold* manifold, const b2Transform& xfA, const b2Transform& xfB) = 0;
 };
 
-Persistent<Function> WrapContact::g_constructor;
-
-void WrapContact::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplContact = NanNew<FunctionTemplate>(New);
-	tplContact->SetClassName(NanNew<String>("b2Contact"));
-	tplContact->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplContact, GetManifold)
-	CLASS_METHOD_APPLY(tplContact, GetWorldManifold)
-	CLASS_METHOD_APPLY(tplContact, IsTouching)
-	CLASS_METHOD_APPLY(tplContact, SetEnabled)
-	CLASS_METHOD_APPLY(tplContact, IsEnabled)
-	CLASS_METHOD_APPLY(tplContact, GetNext)
-	CLASS_METHOD_APPLY(tplContact, GetFixtureA)
-	CLASS_METHOD_APPLY(tplContact, GetChildIndexA)
-	CLASS_METHOD_APPLY(tplContact, GetFixtureB)
-	CLASS_METHOD_APPLY(tplContact, GetChildIndexB)
-	CLASS_METHOD_APPLY(tplContact, SetFriction)
-	CLASS_METHOD_APPLY(tplContact, GetFriction)
-	CLASS_METHOD_APPLY(tplContact, ResetFriction)
-	CLASS_METHOD_APPLY(tplContact, SetRestitution)
-	CLASS_METHOD_APPLY(tplContact, GetRestitution)
-	CLASS_METHOD_APPLY(tplContact, ResetRestitution)
-	CLASS_METHOD_APPLY(tplContact, SetTangentSpeed)
-	CLASS_METHOD_APPLY(tplContact, GetTangentSpeed)
-	NanAssignPersistent(g_constructor, tplContact->GetFunction());
-	exports->Set(NanNew<String>("b2Contact"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapContact::NewInstance(b2Contact* contact)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapContact* wrap_contact = node::ObjectWrap::Unwrap<WrapContact>(instance);
-	wrap_contact->m_contact = contact;
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapContact::New)
-{
-	NanScope();
-	WrapContact* that = new WrapContact();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetManifold,
-{
-	const b2Manifold* manifold = that->m_contact->GetManifold();
-	NanReturnValue(WrapManifold::NewInstance(*manifold));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetWorldManifold,
-{
-	WrapWorldManifold* wrap_world_manifold = node::ObjectWrap::Unwrap<WrapWorldManifold>(Local<Object>::Cast(args[0]));
-	that->m_contact->GetWorldManifold(&wrap_world_manifold->m_world_manifold);
-	wrap_world_manifold->SyncPush();
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, IsTouching,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_contact->IsTouching()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, SetEnabled,
-{
-	that->m_contact->SetEnabled(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, IsEnabled,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_contact->IsEnabled()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetNext,
-{
-	b2Contact* contact = that->m_contact->GetNext();
-	if (contact)
-	{
-		NanReturnValue(WrapContact::NewInstance(contact));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetFixtureA,
-{
-	b2Fixture* fixture = that->m_contact->GetFixtureA();
-	// get fixture internal data
-	WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-	NanReturnValue(NanObjectWrapHandle(wrap_fixture));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetChildIndexA,
-{
-	NanReturnValue(NanNew<Integer>(that->m_contact->GetChildIndexA()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetFixtureB,
-{
-	b2Fixture* fixture = that->m_contact->GetFixtureB();
-	// get fixture internal data
-	WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-	NanReturnValue(NanObjectWrapHandle(wrap_fixture));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, GetChildIndexB,
-{
-	NanReturnValue(NanNew<Integer>(that->m_contact->GetChildIndexB()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapContact, SetFriction, that->m_contact->SetFriction((float32) args[0]->NumberValue()); NanReturnUndefined(); )
-CLASS_METHOD_IMPLEMENT(WrapContact, GetFriction, NanReturnValue(NanNew<Number>(that->m_contact->GetFriction())); )
-CLASS_METHOD_IMPLEMENT(WrapContact, ResetFriction, that->m_contact->ResetFriction(); NanReturnUndefined(); )
-
-CLASS_METHOD_IMPLEMENT(WrapContact, SetRestitution, that->m_contact->SetRestitution((float32) args[0]->NumberValue()); NanReturnUndefined(); )
-CLASS_METHOD_IMPLEMENT(WrapContact, GetRestitution, NanReturnValue(NanNew<Number>(that->m_contact->GetRestitution())); )
-CLASS_METHOD_IMPLEMENT(WrapContact, ResetRestitution, that->m_contact->ResetRestitution(); NanReturnUndefined(); )
-
-CLASS_METHOD_IMPLEMENT(WrapContact, SetTangentSpeed, that->m_contact->SetTangentSpeed((float32) args[0]->NumberValue()); NanReturnUndefined(); )
-CLASS_METHOD_IMPLEMENT(WrapContact, GetTangentSpeed, NanReturnValue(NanNew<Number>(that->m_contact->GetTangentSpeed())); )
-
 //// b2ContactImpulse
 
-class WrapContactImpulse : public node::ObjectWrap
+class WrapContactImpulse : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance(const b2ContactImpulse& contact_impulse);
-
 public:
 	b2ContactImpulse m_contact_impulse;
-	Persistent<Array> m_contact_impulse_normalImpulses;		// m_contact_impulse.normalImpulses
-	Persistent<Array> m_contact_impulse_tangentImpulses;	// m_contact_impulse.tangentImpulses
-
+	Nan::Persistent<v8::Array> m_wrap_normalImpulses;		// m_contact_impulse.normalImpulses
+	Nan::Persistent<v8::Array> m_wrap_tangentImpulses;	// m_contact_impulse.tangentImpulses
 private:
 	WrapContactImpulse()
 	{
-		NanAssignPersistent(m_contact_impulse_normalImpulses, NanNew<Array>(b2_maxManifoldPoints));
-		NanAssignPersistent(m_contact_impulse_tangentImpulses, NanNew<Array>(b2_maxManifoldPoints));
+		m_wrap_normalImpulses.Reset(Nan::New<v8::Array>(b2_maxManifoldPoints));
+		m_wrap_tangentImpulses.Reset(Nan::New<v8::Array>(b2_maxManifoldPoints));
 	}
 	~WrapContactImpulse()
 	{
-		NanDisposePersistent(m_contact_impulse_normalImpulses);
-		NanDisposePersistent(m_contact_impulse_tangentImpulses);
+		m_wrap_normalImpulses.Reset();
+		m_wrap_tangentImpulses.Reset();
 	}
-
 public:
+	b2ContactImpulse* Peek() { return &m_contact_impulse; }
 	void SyncPull()
 	{
 		// sync: pull data from javascript objects
-		NanScope();
-		Local<Array> contact_impulse_normalImpulses = NanNew<Array>(m_contact_impulse_normalImpulses);
+		v8::Local<v8::Array> contact_impulse_normalImpulses = Nan::New<v8::Array>(m_wrap_normalImpulses);
 		for (uint32_t i = 0; i < contact_impulse_normalImpulses->Length(); ++i)
 		{
-			m_contact_impulse.normalImpulses[i] = (float32) contact_impulse_normalImpulses->Get(i)->NumberValue();
+			m_contact_impulse.normalImpulses[i] = NANX_float32(contact_impulse_normalImpulses->Get(i));
 		}
-		Local<Array> contact_impulse_tangentImpulses = NanNew<Array>(m_contact_impulse_tangentImpulses);
+		v8::Local<v8::Array> contact_impulse_tangentImpulses = Nan::New<v8::Array>(m_wrap_tangentImpulses);
 		for (uint32_t i = 0; i < contact_impulse_tangentImpulses->Length(); ++i)
 		{
-			m_contact_impulse.tangentImpulses[i] = (float32) contact_impulse_tangentImpulses->Get(i)->NumberValue();
+			m_contact_impulse.tangentImpulses[i] = NANX_float32(contact_impulse_tangentImpulses->Get(i));
 		}
 	}
-
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		NanScope();
-		Local<Array> contact_impulse_normalImpulses = NanNew<Array>(m_contact_impulse_normalImpulses);
+		v8::Local<v8::Array> contact_impulse_normalImpulses = Nan::New<v8::Array>(m_wrap_normalImpulses);
 		for (uint32_t i = 0; i < contact_impulse_normalImpulses->Length(); ++i)
 		{
-			contact_impulse_normalImpulses->Set(i, NanNew<Number>(m_contact_impulse.normalImpulses[i]));
+			contact_impulse_normalImpulses->Set(i, Nan::New(m_contact_impulse.normalImpulses[i]));
 		}
-		Local<Array> contact_impulse_tangentImpulses = NanNew<Array>(m_contact_impulse_tangentImpulses);
+		v8::Local<v8::Array> contact_impulse_tangentImpulses = Nan::New<v8::Array>(m_wrap_tangentImpulses);
 		for (uint32_t i = 0; i < contact_impulse_tangentImpulses->Length(); ++i)
 		{
-			contact_impulse_tangentImpulses->Set(i, NanNew<Number>(m_contact_impulse.tangentImpulses[i]));
+			contact_impulse_tangentImpulses->Set(i, Nan::New(m_contact_impulse.tangentImpulses[i]));
 		}
 	}
-
+public:
+	static WrapContactImpulse* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapContactImpulse* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapContactImpulse>(object); }
+	static b2ContactImpulse* Peek(v8::Local<v8::Value> value) { WrapContactImpulse* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ContactImpulse"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, normalImpulses)
+			NANX_MEMBER_APPLY(prototype_template, tangentImpulses)
+			NANX_MEMBER_APPLY(prototype_template, count)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapContactImpulse* wrap = new WrapContactImpulse();
+		wrap->Wrap(instance);
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2ContactImpulse& contact_impulse)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapContactImpulse* wrap = new WrapContactImpulse();
+		wrap->Wrap(instance);
+		wrap->m_contact_impulse = contact_impulse; // struct copy
+		wrap->SyncPush();
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(normalImpulses)
-	CLASS_MEMBER_DECLARE(tangentImpulses)
-	CLASS_MEMBER_DECLARE(count)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapContactImpulse* wrap = new WrapContactImpulse();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_ARRAY(normalImpulses) // m_wrap_normalImpulses
+	NANX_MEMBER_ARRAY(tangentImpulses) // m_wrap_tangentImpulses
+	NANX_MEMBER_INTEGER(int32, count)
 };
-
-Persistent<Function> WrapContactImpulse::g_constructor;
-
-void WrapContactImpulse::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplContactImpulse = NanNew<FunctionTemplate>(New);
-	tplContactImpulse->SetClassName(NanNew<String>("b2ContactImpulse"));
-	tplContactImpulse->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplContactImpulse, normalImpulses)
-	CLASS_MEMBER_APPLY(tplContactImpulse, tangentImpulses)
-	CLASS_MEMBER_APPLY(tplContactImpulse, count)
-	NanAssignPersistent(g_constructor, tplContactImpulse->GetFunction());
-	exports->Set(NanNew<String>("b2ContactImpulse"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapContactImpulse::NewInstance(const b2ContactImpulse& contact_impulse)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapContactImpulse* wrap_contact_impulse = node::ObjectWrap::Unwrap<WrapContactImpulse>(instance);
-	wrap_contact_impulse->m_contact_impulse = contact_impulse; // struct copy
-	wrap_contact_impulse->SyncPush();
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapContactImpulse::New)
-{
-	NanScope();
-	WrapContactImpulse* that = new WrapContactImpulse();
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapContactImpulse, m_contact_impulse, normalImpulses	) // m_contact_impulse_normalImpulses
-CLASS_MEMBER_IMPLEMENT_ARRAY	(WrapContactImpulse, m_contact_impulse, tangentImpulses	) // m_contact_impulse_tangentImpulses
-CLASS_MEMBER_IMPLEMENT_INTEGER	(WrapContactImpulse, m_contact_impulse, int32, count	)
 
 //// b2Color
 
-class WrapColor : public node::ObjectWrap
+class WrapColor : public Nan::ObjectWrap
 {
-private:
-	static Persistent<Function> g_constructor;
-
-public:
-	static void Init(Handle<Object> exports);
-	static Handle<Object> NewInstance();
-	static Handle<Object> NewInstance(const b2Color& o);
-
 private:
 	b2Color m_color;
-
 private:
-	WrapColor(float32 r, float32 g, float32 b) : m_color(r, g, b) {}
+	WrapColor() {}
+	WrapColor(float32 r, float32 g, float32 b, float32 a) : m_color(r, g, b, a) {}
 	~WrapColor() {}
-
 public:
+	b2Color* Peek() { return &m_color; }
 	const b2Color& GetColor() const { return m_color; }
 	void SetColor(const b2Color& color) { m_color = color; } // struct copy
-
+public:
+	static WrapColor* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapColor* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapColor>(object); }
+	static b2Color* Peek(v8::Local<v8::Value> value) { WrapColor* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2Color"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, r)
+			NANX_MEMBER_APPLY(prototype_template, g)
+			NANX_MEMBER_APPLY(prototype_template, b)
+			NANX_MEMBER_APPLY(prototype_template, a)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapColor* wrap = new WrapColor();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Color& color)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapColor* wrap = new WrapColor();
+		wrap->Wrap(instance);
+		wrap->SetColor(color);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_MEMBER_DECLARE(r)
-	CLASS_MEMBER_DECLARE(g)
-	CLASS_MEMBER_DECLARE(b)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			float32 r = (info.Length() > 0) ? NANX_float32(info[0]) : 0.5f;
+			float32 g = (info.Length() > 1) ? NANX_float32(info[1]) : 0.5f;
+			float32 b = (info.Length() > 2) ? NANX_float32(info[2]) : 0.5f;
+			float32 a = (info.Length() > 3) ? NANX_float32(info[3]) : 0.5f;
+			WrapColor* wrap = new WrapColor(r, g, b, a);
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_NUMBER(float32, r)
+	NANX_MEMBER_NUMBER(float32, g)
+	NANX_MEMBER_NUMBER(float32, b)
+	NANX_MEMBER_NUMBER(float32, a)
 };
-
-Persistent<Function> WrapColor::g_constructor;
-
-void WrapColor::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplColor = NanNew<FunctionTemplate>(New);
-	tplColor->SetClassName(NanNew<String>("b2Color"));
-	tplColor->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_MEMBER_APPLY(tplColor, r)
-	CLASS_MEMBER_APPLY(tplColor, g)
-	CLASS_MEMBER_APPLY(tplColor, b)
-	NanAssignPersistent(g_constructor, tplColor->GetFunction());
-	exports->Set(NanNew<String>("b2Color"), NanNew<Function>(g_constructor));
-}
-
-Handle<Object> WrapColor::NewInstance()
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	return NanEscapeScope(instance);
-}
-
-Handle<Object> WrapColor::NewInstance(const b2Color& o)
-{
-	NanEscapableScope();
-	Local<Object> instance = NanNew<Function>(g_constructor)->NewInstance();
-	WrapColor* that = node::ObjectWrap::Unwrap<WrapColor>(instance);
-	that->SetColor(o);
-	return NanEscapeScope(instance);
-}
-
-NAN_METHOD(WrapColor::New)
-{
-	NanScope();
-	float32 r = (args.Length() > 0) ? (float32) args[0]->NumberValue() : 0.5f;
-	float32 g = (args.Length() > 1) ? (float32) args[1]->NumberValue() : 0.5f;
-	float32 b = (args.Length() > 2) ? (float32) args[2]->NumberValue() : 0.5f;
-	WrapColor* that = new WrapColor(r, g, b);
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapColor, m_color, float32, r)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapColor, m_color, float32, g)
-CLASS_MEMBER_IMPLEMENT_NUMBER	(WrapColor, m_color, float32, b)
 
 //// b2Draw
 
+#if B2_ENABLE_PARTICLE
+
+//// b2Particle
+
+//// b2ParticleColor
+
+class WrapParticleColor : public Nan::ObjectWrap
+{
+private:
+	b2ParticleColor m_particle_color;
+private:
+	WrapParticleColor() {}
+	WrapParticleColor(uint8 r, uint8 g, uint8 b, uint8 a) : m_particle_color(r, g, b, a) {}
+	~WrapParticleColor() {}
+public:
+	b2ParticleColor* Peek() { return &m_particle_color; }
+	const b2ParticleColor& GetParticleColor() const { return m_particle_color; }
+	void SetParticleColor(const b2ParticleColor& particle_color) { m_particle_color = particle_color; } // struct copy
+public:
+	static WrapParticleColor* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleColor* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleColor>(object); }
+	static b2ParticleColor* Peek(v8::Local<v8::Value> value) { WrapParticleColor* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleColor"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, r)
+			NANX_MEMBER_APPLY(prototype_template, g)
+			NANX_MEMBER_APPLY(prototype_template, b)
+			NANX_MEMBER_APPLY(prototype_template, a)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleColor* wrap = new WrapParticleColor();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2ParticleColor& color)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleColor* wrap = new WrapParticleColor();
+		wrap->Wrap(instance);
+		wrap->SetParticleColor(color);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			uint8 r = (info.Length() > 0) ? NANX_uint8(info[0]) : 0;
+			uint8 g = (info.Length() > 1) ? NANX_uint8(info[1]) : 0;
+			uint8 b = (info.Length() > 2) ? NANX_uint8(info[2]) : 0;
+			uint8 a = (info.Length() > 3) ? NANX_uint8(info[3]) : 0;
+			WrapParticleColor* wrap = new WrapParticleColor(r, g, b, a);
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_UINT32(uint8, r)
+	NANX_MEMBER_UINT32(uint8, g)
+	NANX_MEMBER_UINT32(uint8, b)
+	NANX_MEMBER_UINT32(uint8, a)
+};
+
+//// b2ParticleDef
+
+class WrapParticleDef : public Nan::ObjectWrap
+{
+private:
+	b2ParticleDef m_pd;
+	Nan::Persistent<v8::Object> m_wrap_position;	// m_pd.position
+	Nan::Persistent<v8::Object> m_wrap_velocity;	// m_pd.velocity
+	Nan::Persistent<v8::Object> m_wrap_color;		// m_pd.color
+	Nan::Persistent<v8::Value> m_wrap_userData;	// m_pd.userData
+private:
+	WrapParticleDef()
+	{
+		m_wrap_position.Reset(WrapVec2::NewInstance(m_pd.position));
+		m_wrap_velocity.Reset(WrapVec2::NewInstance(m_pd.velocity));
+		m_wrap_color.Reset(WrapParticleColor::NewInstance(m_pd.color));
+	}
+	~WrapParticleDef()
+	{
+		m_wrap_position.Reset();
+		m_wrap_velocity.Reset();
+		m_wrap_color.Reset();
+		m_wrap_userData.Reset();
+	}
+public:
+	b2ParticleDef* Peek() { return &m_pd; }
+	b2ParticleDef& GetParticleDef() { return m_pd; }
+	const b2ParticleDef& UseParticleDef() { SyncPull(); return GetParticleDef(); }
+	v8::Local<v8::Value> GetUserDataHandle() { return Nan::New<v8::Value>(m_wrap_userData); }
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+		m_pd.position = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->GetVec2(); // struct copy
+		m_pd.velocity = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_velocity))->GetVec2(); // struct copy
+		m_pd.color = WrapParticleColor::Unwrap(Nan::New<v8::Object>(m_wrap_color))->GetParticleColor(); // struct copy
+		//m_pd.userData; // not used
+	}
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->SetVec2(m_pd.position);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_velocity))->SetVec2(m_pd.velocity);
+		WrapParticleColor::Unwrap(Nan::New<v8::Object>(m_wrap_color))->SetParticleColor(m_pd.color);
+		//m_pd.userData; // not used
+	}
+public:
+	static WrapParticleDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleDef>(object); }
+	static b2ParticleDef* Peek(v8::Local<v8::Value> value) { WrapParticleDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, flags)
+			NANX_MEMBER_APPLY(prototype_template, position)
+			NANX_MEMBER_APPLY(prototype_template, velocity)
+			NANX_MEMBER_APPLY(prototype_template, color)
+			NANX_MEMBER_APPLY(prototype_template, lifetime)
+			NANX_MEMBER_APPLY(prototype_template, userData)
+			//b2ParticleGroup* group;
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleDef* wrap = new WrapParticleDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleDef* wrap = new WrapParticleDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_INTEGER(uint32, flags)
+	NANX_MEMBER_OBJECT(position) // m_wrap_position
+	NANX_MEMBER_OBJECT(velocity) // m_wrap_velocity
+	NANX_MEMBER_OBJECT(color) // m_wrap_color
+	NANX_MEMBER_NUMBER(float32, lifetime)
+	NANX_MEMBER_VALUE(userData) // m_wrap_userData
+//	b2ParticleGroup* group;
+};
+
+//// b2ParticleHandle
+
+class WrapParticleHandle : public Nan::ObjectWrap
+{
+private:
+	b2ParticleHandle m_particle_handle;
+private:
+	WrapParticleHandle() {}
+	~WrapParticleHandle() {}
+public:
+	b2ParticleHandle* Peek() { return &m_particle_handle; }
+public:
+	static WrapParticleHandle* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleHandle* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleHandle>(object); }
+	static b2ParticleHandle* Peek(v8::Local<v8::Value> value) { WrapParticleHandle* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleHandle"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetIndex)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleHandle* wrap = new WrapParticleHandle();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleHandle* wrap = new WrapParticleHandle();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(GetIndex)
+	{
+		WrapParticleHandle* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_handle.GetIndex()));
+	}
+};
+
+//// b2ParticleGroupDef
+
+class WrapParticleGroupDef : public Nan::ObjectWrap
+{
+private:
+	b2ParticleGroupDef m_pgd;
+	Nan::Persistent<v8::Object> m_wrap_position;			// m_pgd.position
+	Nan::Persistent<v8::Object> m_wrap_linearVelocity;	// m_pgd.linearVelocity
+	Nan::Persistent<v8::Object> m_wrap_color;				// m_pgd.color
+	Nan::Persistent<v8::Object> m_wrap_shape;				// m_pgd.shape
+	Nan::Persistent<v8::Value> m_wrap_userData;			// m_pgd.userData
+private:
+	WrapParticleGroupDef()
+	{
+		m_wrap_position.Reset(WrapVec2::NewInstance(m_pgd.position));
+		m_wrap_linearVelocity.Reset(WrapVec2::NewInstance(m_pgd.linearVelocity));
+		m_wrap_color.Reset(WrapParticleColor::NewInstance(m_pgd.color));
+	}
+	~WrapParticleGroupDef()
+	{
+		m_wrap_position.Reset();
+		m_wrap_linearVelocity.Reset();
+		m_wrap_color.Reset();
+		m_wrap_shape.Reset();
+		m_wrap_userData.Reset();
+	}
+public:
+	b2ParticleGroupDef* Peek() { return &m_pgd; }
+	b2ParticleGroupDef& GetParticleGroupDef() { return m_pgd; }
+	const b2ParticleGroupDef& UseParticleGroupDef() { SyncPull(); return GetParticleGroupDef(); }
+	v8::Local<v8::Value> GetUserDataHandle() { return Nan::New<v8::Value>(m_wrap_userData); }
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+		m_pgd.position = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->GetVec2(); // struct copy
+		m_pgd.linearVelocity = WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearVelocity))->GetVec2(); // struct copy
+		m_pgd.color = WrapParticleColor::Unwrap(Nan::New<v8::Object>(m_wrap_color))->GetParticleColor(); // struct copy
+		if (!m_wrap_shape.IsEmpty())
+		{
+			WrapShape* wrap_shape = WrapShape::Unwrap(Nan::New<v8::Object>(m_wrap_shape));
+			m_pgd.shape = &wrap_shape->UseShape();
+		}
+		else
+		{
+			m_pgd.shape = NULL;
+		}
+		//m_pgd.userData; // not used
+	}
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_position))->SetVec2(m_pgd.position);
+		WrapVec2::Unwrap(Nan::New<v8::Object>(m_wrap_linearVelocity))->SetVec2(m_pgd.linearVelocity);
+		WrapParticleColor::Unwrap(Nan::New<v8::Object>(m_wrap_color))->SetParticleColor(m_pgd.color);
+		if (m_pgd.shape)
+		{
+			// TODO: m_wrap_shape.Reset(WrapShape::GetWrap(m_pgd.shape)->handle());
+		}
+		else
+		{
+			m_wrap_shape.Reset();
+		}
+		//m_pgd.userData; // not used
+	}
+public:
+	static WrapParticleGroupDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleGroupDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleGroupDef>(object); }
+	static b2ParticleGroupDef* Peek(v8::Local<v8::Value> value) { WrapParticleGroupDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleGroupDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, flags)
+			NANX_MEMBER_APPLY(prototype_template, groupFlags)
+			NANX_MEMBER_APPLY(prototype_template, position)
+			NANX_MEMBER_APPLY(prototype_template, angle)
+			NANX_MEMBER_APPLY(prototype_template, linearVelocity)
+			NANX_MEMBER_APPLY(prototype_template, angularVelocity)
+			NANX_MEMBER_APPLY(prototype_template, color)
+			NANX_MEMBER_APPLY(prototype_template, strength)
+			NANX_MEMBER_APPLY(prototype_template, shape)
+			//const b2Shape* const* shapes;
+			//int32 shapeCount;
+			//float32 stride;
+			//int32 particleCount;
+			//const b2Vec2* positionData;
+			NANX_MEMBER_APPLY(prototype_template, lifetime)
+			NANX_MEMBER_APPLY(prototype_template, userData)
+			//b2ParticleGroup* group;
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleGroupDef* wrap = new WrapParticleGroupDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleGroupDef* wrap = new WrapParticleGroupDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_INTEGER(uint32, flags)
+	NANX_MEMBER_INTEGER(uint32, groupFlags)
+	NANX_MEMBER_OBJECT(position) // m_wrap_position
+	NANX_MEMBER_NUMBER(float32, angle)
+	NANX_MEMBER_OBJECT(linearVelocity) // m_wrap_linearVelocity
+	NANX_MEMBER_NUMBER(float32, angularVelocity)
+	NANX_MEMBER_OBJECT(color) // m_wrap_color
+	NANX_MEMBER_NUMBER(float32, strength)
+	NANX_MEMBER_OBJECT(shape) // m_wrap_shape
+	//const b2Shape* const* shapes;
+	//int32 shapeCount;
+	//float32 stride;
+	//int32 particleCount;
+	//const b2Vec2* positionData;
+	NANX_MEMBER_NUMBER(float32, lifetime)
+	NANX_MEMBER_VALUE(userData) // m_wrap_userData
+	//b2ParticleGroup* group;
+};
+
+//// b2ParticleGroup
+
+class WrapParticleGroup : public Nan::ObjectWrap
+{
+private:
+	b2ParticleGroup* m_particle_group;
+	Nan::Persistent<v8::Object> m_particle_group_particle_system;
+	Nan::Persistent<v8::Value> m_particle_group_userData;
+private:
+	WrapParticleGroup() : m_particle_group(NULL) {}
+	~WrapParticleGroup()
+	{
+		m_particle_group_particle_system.Reset();
+		m_particle_group_userData.Reset();
+	}
+public:
+	b2ParticleGroup* Peek() { return m_particle_group; }
+	b2ParticleGroup* GetParticleGroup() { return m_particle_group; }
+	void SetupObject(v8::Local<v8::Object> h_particle_system, WrapParticleGroupDef* wrap_pgd, b2ParticleGroup* particle_group)
+	{
+		m_particle_group = particle_group;
+		// set particle_group internal data
+		WrapParticleGroup::SetWrap(m_particle_group, this);
+		// set reference to this particle_group (prevent GC)
+		Ref();
+		// set reference to world object
+		m_particle_group_particle_system.Reset(h_particle_system);
+		// set reference to user data object
+		m_particle_group_userData.Reset(wrap_pgd->GetUserDataHandle());
+	}
+	b2ParticleGroup* ResetObject()
+	{
+		// clear reference to world object
+		m_particle_group_particle_system.Reset();
+		// clear reference to user data object
+		m_particle_group_userData.Reset();
+		// clear reference to this particle_group (allow GC)
+		Unref();
+		// clear particle_group internal data
+		WrapParticleGroup::SetWrap(m_particle_group, NULL);
+		b2ParticleGroup* particle_group = m_particle_group;
+		m_particle_group = NULL;
+		return particle_group;
+	}
+public:
+	static WrapParticleGroup* GetWrap(const b2ParticleGroup* particle_group)
+	{
+		return static_cast<WrapParticleGroup*>(particle_group->GetUserData());
+	}
+	static void SetWrap(b2ParticleGroup* particle_group, WrapParticleGroup* wrap)
+	{
+		particle_group->SetUserData(wrap);
+	}
+public:
+	static WrapParticleGroup* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleGroup* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleGroup>(object); }
+	static b2ParticleGroup* Peek(v8::Local<v8::Value> value) { WrapParticleGroup* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleGroup"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, GetParticleCount)
+			NANX_METHOD_APPLY(prototype_template, GetBufferIndex)
+			NANX_METHOD_APPLY(prototype_template, ContainsParticle)
+			NANX_METHOD_APPLY(prototype_template, DestroyParticles)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleGroup* wrap = new WrapParticleGroup();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleGroup* wrap = new WrapParticleGroup();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	//b2ParticleGroup* GetNext();
+	//b2ParticleSystem* GetParticleSystem();
+	NANX_METHOD(GetParticleCount)
+	{
+		WrapParticleGroup* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_group->GetParticleCount()));
+	}
+	NANX_METHOD(GetBufferIndex)
+	{
+		WrapParticleGroup* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_group->GetBufferIndex()));
+	}
+	NANX_METHOD(ContainsParticle)
+	{
+		WrapParticleGroup* wrap = Unwrap(info.This());
+		int32 index = NANX_int32(info[0]);
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_group->ContainsParticle(index)));
+	}
+	//uint32 GetAllParticleFlags() const;
+	//uint32 GetGroupFlags() const;
+	//void SetGroupFlags(uint32 flags);
+	//float32 GetMass() const;
+	//float32 GetInertia() const;
+	//b2Vec2 GetCenter() const;
+	//b2Vec2 GetLinearVelocity() const;
+	//float32 GetAngularVelocity() const;
+	//const b2Transform& GetTransform() const;
+	//const b2Vec2& GetPosition() const;
+	//float32 GetAngle() const;
+	//b2Vec2 GetLinearVelocityFromWorldPoint(const b2Vec2& worldPoint) const;
+	//void* GetUserData() const;
+	//void SetUserData(void* data);
+	//void ApplyForce(const b2Vec2& force);
+	//void ApplyLinearImpulse(const b2Vec2& impulse);
+	NANX_METHOD(DestroyParticles)
+	{
+		WrapParticleGroup* wrap = Unwrap(info.This());
+		bool callDestructionListener = (info.Length() > 0) ? NANX_bool(info[0]) : false;
+		wrap->m_particle_group->DestroyParticles(callDestructionListener);
+	}
+};
+
+//// b2ParticleSystemDef
+
+class WrapParticleSystemDef : public Nan::ObjectWrap
+{
+private:
+	b2ParticleSystemDef m_psd;
+private:
+	WrapParticleSystemDef() {}
+	~WrapParticleSystemDef() {}
+public:
+	b2ParticleSystemDef* Peek() { return &m_psd; }
+	b2ParticleSystemDef& GetParticleSystemDef() { return m_psd; }
+	const b2ParticleSystemDef& UseParticleSystemDef() { SyncPull(); return GetParticleSystemDef(); }
+	void SyncPull()
+	{
+		// sync: pull data from javascript objects
+	}
+	void SyncPush()
+	{
+		// sync: push data into javascript objects
+	}
+public:
+	static WrapParticleSystemDef* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleSystemDef* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleSystemDef>(object); }
+	static b2ParticleSystemDef* Peek(v8::Local<v8::Value> value) { WrapParticleSystemDef* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleSystemDef"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_MEMBER_APPLY(prototype_template, strictContactCheck)
+			NANX_MEMBER_APPLY(prototype_template, strictContactCheck)
+			NANX_MEMBER_APPLY(prototype_template, density)
+			NANX_MEMBER_APPLY(prototype_template, gravityScale)
+			NANX_MEMBER_APPLY(prototype_template, radius)
+			NANX_MEMBER_APPLY(prototype_template, maxCount)
+			NANX_MEMBER_APPLY(prototype_template, pressureStrength)
+			NANX_MEMBER_APPLY(prototype_template, dampingStrength)
+			NANX_MEMBER_APPLY(prototype_template, elasticStrength)
+			NANX_MEMBER_APPLY(prototype_template, springStrength)
+			NANX_MEMBER_APPLY(prototype_template, viscousStrength)
+			NANX_MEMBER_APPLY(prototype_template, surfaceTensionPressureStrength)
+			NANX_MEMBER_APPLY(prototype_template, surfaceTensionNormalStrength)
+			NANX_MEMBER_APPLY(prototype_template, repulsiveStrength)
+			NANX_MEMBER_APPLY(prototype_template, powderStrength)
+			NANX_MEMBER_APPLY(prototype_template, ejectionStrength)
+			NANX_MEMBER_APPLY(prototype_template, staticPressureStrength)
+			NANX_MEMBER_APPLY(prototype_template, staticPressureRelaxation)
+			NANX_MEMBER_APPLY(prototype_template, staticPressureIterations)
+			NANX_MEMBER_APPLY(prototype_template, colorMixingStrength)
+			NANX_MEMBER_APPLY(prototype_template, destroyByAge)
+			NANX_MEMBER_APPLY(prototype_template, lifetimeGranularity)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleSystemDef* wrap = new WrapParticleSystemDef();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleSystemDef* wrap = new WrapParticleSystemDef();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_MEMBER_BOOLEAN(bool, strictContactCheck)
+	NANX_MEMBER_NUMBER(float32, density)
+	NANX_MEMBER_NUMBER(float32, gravityScale)
+	NANX_MEMBER_NUMBER(float32, radius)
+	NANX_MEMBER_INTEGER(int32, maxCount)
+	NANX_MEMBER_NUMBER(float32, pressureStrength)
+	NANX_MEMBER_NUMBER(float32, dampingStrength)
+	NANX_MEMBER_NUMBER(float32, elasticStrength)
+	NANX_MEMBER_NUMBER(float32, springStrength)
+	NANX_MEMBER_NUMBER(float32, viscousStrength)
+	NANX_MEMBER_NUMBER(float32, surfaceTensionPressureStrength)
+	NANX_MEMBER_NUMBER(float32, surfaceTensionNormalStrength)
+	NANX_MEMBER_NUMBER(float32, repulsiveStrength)
+	NANX_MEMBER_NUMBER(float32, powderStrength)
+	NANX_MEMBER_NUMBER(float32, ejectionStrength)
+	NANX_MEMBER_NUMBER(float32, staticPressureStrength)
+	NANX_MEMBER_NUMBER(float32, staticPressureRelaxation)
+	NANX_MEMBER_INTEGER(int32, staticPressureIterations)
+	NANX_MEMBER_NUMBER(float32, colorMixingStrength)
+	NANX_MEMBER_BOOLEAN(bool, destroyByAge)
+	NANX_MEMBER_NUMBER(float32, lifetimeGranularity)
+};
+
+//// b2ParticleSystem
+
+class WrapParticleSystem : public Nan::ObjectWrap
+{
+private:
+	b2ParticleSystem* m_particle_system;
+	Nan::Persistent<v8::Object> m_particle_system_world;
+private:
+	WrapParticleSystem() : m_particle_system(NULL) {}
+	~WrapParticleSystem()
+	{
+		m_particle_system_world.Reset();
+	}
+public:
+	b2ParticleSystem* Peek() { return m_particle_system; }
+	b2ParticleSystem* GetParticleSystem() { return m_particle_system; }
+	void SetupObject(v8::Local<v8::Object> h_world, WrapParticleSystemDef* wrap_psd, b2ParticleSystem* particle_system)
+	{
+		m_particle_system = particle_system;
+		// set reference to this particle_system (prevent GC)
+		Ref();
+		// set reference to world object
+		m_particle_system_world.Reset(h_world);
+	}
+	b2ParticleSystem* ResetObject()
+	{
+		// clear reference to world object
+		m_particle_system_world.Reset();
+		// clear reference to this particle_system (allow GC)
+		Unref();
+		b2ParticleSystem* particle_system = m_particle_system;
+		m_particle_system = NULL;
+		return particle_system;
+	}
+public:
+	static WrapParticleSystem* GetWrap(const b2ParticleSystem* particle_system)
+	{
+		//return static_cast<WrapParticleSystem*>(particle_system->GetUserData());
+		return NULL;
+	}
+	static void SetWrap(b2ParticleSystem* particle_system, WrapParticleSystem* wrap)
+	{
+		//particle_system->SetUserData(wrap);
+	}
+public:
+	static WrapParticleSystem* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapParticleSystem* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapParticleSystem>(object); }
+	static b2ParticleSystem* Peek(v8::Local<v8::Value> value) { WrapParticleSystem* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2ParticleSystem"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, CreateParticle)
+			NANX_METHOD_APPLY(prototype_template, DestroyParticle)
+			NANX_METHOD_APPLY(prototype_template, DestroyOldestParticle)
+			NANX_METHOD_APPLY(prototype_template, CreateParticleGroup)
+			NANX_METHOD_APPLY(prototype_template, GetParticleCount)
+			NANX_METHOD_APPLY(prototype_template, GetRadius)
+			NANX_METHOD_APPLY(prototype_template, SetPositionBuffer)
+			NANX_METHOD_APPLY(prototype_template, SetVelocityBuffer)
+			NANX_METHOD_APPLY(prototype_template, SetColorBuffer)
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapParticleSystem* wrap = new WrapParticleSystem();
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
+private:
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapParticleSystem* wrap = new WrapParticleSystem();
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(CreateParticle)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		WrapParticleDef* wrap_pd = WrapParticleDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		// create box2d particle
+		int32 particle_index = wrap->m_particle_system->CreateParticle(wrap_pd->UseParticleDef());
+		info.GetReturnValue().Set(Nan::New(particle_index));
+	}
+//	const b2ParticleHandle* GetParticleHandleFromIndex(const int32 index);
+	NANX_METHOD(DestroyParticle)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		int32 particle_index = NANX_int32(info[0]);
+		bool callDestructionListener = (info.Length() > 1) ? NANX_bool(info[1]) : false;
+		// destroy box2d particle
+		wrap->m_particle_system->DestroyParticle(particle_index, callDestructionListener);
+	}
+	NANX_METHOD(DestroyOldestParticle)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		int32 particle_index = NANX_int32(info[0]);
+		bool callDestructionListener = (info.Length() > 1) ? NANX_bool(info[1]) : false;
+		// destroy box2d particle
+		wrap->m_particle_system->DestroyOldestParticle(particle_index, callDestructionListener);
+	}
+//	int32 DestroyParticlesInShape(const b2Shape& shape, const b2Transform& xf);
+//	int32 DestroyParticlesInShape(const b2Shape& shape, const b2Transform& xf, bool callDestructionListener);
+	NANX_METHOD(CreateParticleGroup)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		WrapParticleGroupDef* wrap_pgd = WrapParticleGroupDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		// create box2d particle group
+		b2ParticleGroup* particle_group = wrap->m_particle_system->CreateParticleGroup(wrap_pgd->UseParticleGroupDef());
+		// create javascript particle group object
+		v8::Local<v8::Object> h_particle_group = WrapParticleGroup::NewInstance();
+		WrapParticleGroup* wrap_particle_group = WrapParticleGroup::Unwrap(h_particle_group);
+		// set up javascript particle group object
+		wrap_particle_group->SetupObject(info.This(), wrap_pgd, particle_group);
+		info.GetReturnValue().Set(h_particle_group);
+	}
+//	void JoinParticleGroups(b2ParticleGroup* groupA, b2ParticleGroup* groupB);
+//	void SplitParticleGroup(b2ParticleGroup* group);
+//	b2ParticleGroup* GetParticleGroupList();
+//	int32 GetParticleGroupCount() const;
+	NANX_METHOD(GetParticleCount)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_system->GetParticleCount()));
+	}
+//	int32 GetMaxParticleCount() const;
+//	void SetMaxParticleCount(int32 count);
+//	uint32 GetAllParticleFlags() const;
+//	uint32 GetAllGroupFlags() const;
+//	void SetPaused(bool paused);
+//	bool GetPaused() const;
+//	void SetDensity(float32 density);
+//	float32 GetDensity() const;
+//	void SetGravityScale(float32 gravityScale);
+//	float32 GetGravityScale() const;
+//	void SetDamping(float32 damping);
+//	float32 GetDamping() const;
+//	void SetStaticPressureIterations(int32 iterations);
+//	int32 GetStaticPressureIterations() const;
+//	void SetRadius(float32 radius);
+//	float32 GetRadius() const;
+	NANX_METHOD(GetRadius)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_particle_system->GetRadius()));
+	}
+//	b2Vec2* GetPositionBuffer();
+//	b2Vec2* GetVelocityBuffer();
+//	b2ParticleColor* GetColorBuffer();
+//	b2ParticleGroup* const* GetGroupBuffer();
+//	float32* GetWeightBuffer();
+//	void** GetUserDataBuffer();
+//	const uint32* GetFlagsBuffer() const;
+//	void SetParticleFlags(int32 index, uint32 flags);
+//	uint32 GetParticleFlags(const int32 index);
+//	void SetFlagsBuffer(uint32* buffer, int32 capacity);
+//	void SetPositionBuffer(b2Vec2* buffer, int32 capacity);
+	NANX_METHOD(SetPositionBuffer)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		#if NODE_VERSION_AT_LEAST(4, 0, 0)
+		v8::Local<v8::Float32Array> _buffer = v8::Local<v8::Float32Array>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2Vec2* buffer = reinterpret_cast<b2Vec2*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
+		#else
+		v8::Local<v8::Object> _buffer = v8::Local<v8::Object>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2Vec2* buffer = static_cast<b2Vec2*>(_buffer->GetIndexedPropertiesExternalArrayData());
+		#endif
+		wrap->m_particle_system->SetPositionBuffer(buffer, capacity);
+	}
+//	void SetVelocityBuffer(b2Vec2* buffer, int32 capacity);
+	NANX_METHOD(SetVelocityBuffer)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		#if NODE_VERSION_AT_LEAST(4, 0, 0)
+		v8::Local<v8::Float32Array> _buffer = v8::Local<v8::Float32Array>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2Vec2* buffer = reinterpret_cast<b2Vec2*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
+		#else
+		v8::Local<v8::Object> _buffer = v8::Local<v8::Object>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2Vec2* buffer = static_cast<b2Vec2*>(_buffer->GetIndexedPropertiesExternalArrayData());
+		#endif
+		wrap->m_particle_system->SetVelocityBuffer(buffer, capacity);
+	}
+//	void SetColorBuffer(b2ParticleColor* buffer, int32 capacity);
+	NANX_METHOD(SetColorBuffer)
+	{
+		WrapParticleSystem* wrap = Unwrap(info.This());
+		#if NODE_VERSION_AT_LEAST(4, 0, 0)
+		v8::Local<v8::Uint8Array> _buffer = v8::Local<v8::Uint8Array>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2ParticleColor* buffer = reinterpret_cast<b2ParticleColor*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
+		#else
+		v8::Local<v8::Object> _buffer = v8::Local<v8::Object>::Cast(info[0]);
+		int32 capacity = NANX_int32(info[1]);
+		b2ParticleColor* buffer = static_cast<b2ParticleColor*>(_buffer->GetIndexedPropertiesExternalArrayData());
+		#endif
+		wrap->m_particle_system->SetColorBuffer(buffer, capacity);
+	}
+//	void SetUserDataBuffer(void** buffer, int32 capacity);
+//	const b2ParticleContact* GetContacts() const;
+//	int32 GetContactCount() const;
+//	const b2ParticleBodyContact* GetBodyContacts() const;
+//	int32 GetBodyContactCount() const;
+//	const b2ParticlePair* GetPairs() const;
+//	int32 GetPairCount() const;
+//	const b2ParticleTriad* GetTriads() const;
+//	int32 GetTriadCount() const;
+//	void SetStuckThreshold(int32 iterations);
+//	const int32* GetStuckCandidates() const;
+//	int32 GetStuckCandidateCount() const;
+//	float32 ComputeCollisionEnergy() const;
+//	void SetStrictContactCheck(bool enabled);
+//	bool GetStrictContactCheck() const;
+//	void SetParticleLifetime(const int32 index, const float32 lifetime);
+//	float32 GetParticleLifetime(const int32 index);
+//	void SetDestructionByAge(const bool enable);
+//	bool GetDestructionByAge() const;
+//	const int32* GetExpirationTimeBuffer();
+//	float32 ExpirationTimeToLifetime(const int32 expirationTime) const;
+//	const int32* GetIndexByExpirationTimeBuffer();
+//	void ParticleApplyLinearImpulse(int32 index, const b2Vec2& impulse);
+//	void ApplyLinearImpulse(int32 firstIndex, int32 lastIndex, const b2Vec2& impulse);
+//	void ParticleApplyForce(int32 index, const b2Vec2& force);
+//	void ApplyForce(int32 firstIndex, int32 lastIndex, const b2Vec2& force);
+//	b2ParticleSystem* GetNext();
+//	void QueryAABB(b2QueryCallback* callback, const b2AABB& mass_data) const;
+//	void QueryShapeAABB(b2QueryCallback* callback, const b2Shape& shape, const b2Transform& xf) const;
+//	void RayCast(b2RayCastCallback* callback, const b2Vec2& point1, const b2Vec2& point2) const;
+//	void ComputeAABB(b2AABB* const mass_data) const;
+};
+
+#endif
+
 //// b2World
 
-class WrapWorld : public node::ObjectWrap
+class WrapWorld : public Nan::ObjectWrap
 {
 private:
 	class WrapDestructionListener : public b2DestructionListener
@@ -6355,11 +7517,15 @@ private:
 	public:
 		WrapWorld* m_that;
 	public:
-		WrapDestructionListener(WrapWorld* that) : m_that(that) {}
+		WrapDestructionListener(WrapWorld* wrap) : m_that(wrap) {}
 		~WrapDestructionListener() { m_that = NULL; }
 	public:
 		virtual void SayGoodbye(b2Joint* joint);
 		virtual void SayGoodbye(b2Fixture* fixture);
+		#if B2_ENABLE_PARTICLE
+		virtual void SayGoodbye(b2ParticleGroup* group);
+		virtual void SayGoodbye(b2ParticleSystem* particleSystem, int32 index);
+		#endif
 	};
 
 private:
@@ -6368,10 +7534,14 @@ private:
 	public:
 		WrapWorld* m_that;
 	public:
-		WrapContactFilter(WrapWorld* that) : m_that(that) {}
+		WrapContactFilter(WrapWorld* wrap) : m_that(wrap) {}
 		~WrapContactFilter() { m_that = NULL; }
 	public:
 		virtual bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB);
+		#if B2_ENABLE_PARTICLE
+		virtual bool ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex);
+		virtual bool ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB);
+		#endif
 	};
 
 private:
@@ -6380,11 +7550,17 @@ private:
 	public:
 		WrapWorld* m_that;
 	public:
-		WrapContactListener(WrapWorld* that) : m_that(that) {}
+		WrapContactListener(WrapWorld* wrap) : m_that(wrap) {}
 		~WrapContactListener() { m_that = NULL; }
 	public:
 		virtual void BeginContact(b2Contact* contact);
 		virtual void EndContact(b2Contact* contact);
+		#if B2_ENABLE_PARTICLE
+		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact);
+		virtual void EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index);
+		virtual void BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact);
+		virtual void EndContact(b2ParticleSystem* particleSystem, int32 indexA, int32 indexB);
+		#endif
 		virtual void PreSolve(b2Contact* contact, const b2Manifold* oldManifold);
 		virtual void PostSolve(b2Contact* contact, const b2ContactImpulse* impulse);
 	};
@@ -6395,42 +7571,91 @@ private:
 	public:
 		WrapWorld* m_that;
 	public:
-		WrapDraw(WrapWorld* that) : m_that(that) {}
+		WrapDraw(WrapWorld* wrap) : m_that(wrap) {}
 		~WrapDraw() { m_that = NULL; }
 	public:
 		virtual void DrawPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
 		virtual void DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
 		virtual void DrawCircle(const b2Vec2& center, float32 radius, const b2Color& color);
 		virtual void DrawSolidCircle(const b2Vec2& center, float32 radius, const b2Vec2& axis, const b2Color& color);
+		#if B2_ENABLE_PARTICLE
+		virtual void DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count);
+		#endif
 		virtual void DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color);
 		virtual void DrawTransform(const b2Transform& xf);
 	};
 
-public:
-	static void Init(Handle<Object> exports);
-
-	static WrapWorld* GetWrap(const b2World* world)
+private:
+	class WrapQueryCallback : public b2QueryCallback
 	{
-		//return (WrapWorld*) world->GetUserData();
-		return NULL;
-	}
+	private:
+		v8::Local<v8::Function> m_callback;
+	public:
+		WrapQueryCallback(v8::Local<v8::Function> callback) : m_callback(callback) {}
+		bool ReportFixture(b2Fixture* fixture)
+		{
+			// get fixture internal data
+			WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+			v8::Local<v8::Object> h_fixture = wrap_fixture->handle();
+			v8::Local<v8::Value> argv[] = { h_fixture };
+			return NANX_bool(Nan::MakeCallback(Nan::GetCurrentContext()->Global(), m_callback, countof(argv), argv));
+		}
+		#if B2_ENABLE_PARTICLE
+		bool ReportParticle(const b2ParticleSystem* particleSystem, int32 index)
+		{
+			// TODO
+			return b2QueryCallback::ReportParticle(particleSystem, index);
+		}
+		bool ShouldQueryParticleSystem(const b2ParticleSystem* particleSystem)
+		{
+			// TODO
+			return b2QueryCallback::ShouldQueryParticleSystem(particleSystem);
+		}
+		#endif
+	};
 
-	static void SetWrap(b2World* world, WrapWorld* wrap)
+private:
+	class WrapRayCastCallback : public b2RayCastCallback
 	{
-		//world->SetUserData(wrap);
-	}
+	private:
+		v8::Local<v8::Function> m_callback;
+	public:
+		WrapRayCastCallback(v8::Local<v8::Function> callback) : m_callback(callback) {}
+		float32 ReportFixture(b2Fixture* fixture, const b2Vec2& point, const b2Vec2& normal, float32 fraction)
+		{
+			// get fixture internal data
+			WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+			v8::Local<v8::Object> h_fixture = wrap_fixture->handle();
+			v8::Local<v8::Object> h_point = WrapVec2::NewInstance(point);
+			v8::Local<v8::Object> h_normal = WrapVec2::NewInstance(normal);
+			v8::Local<v8::Number> h_fraction = Nan::New(fraction);
+			v8::Local<v8::Value> argv[] = { h_fixture, h_point, h_normal, h_fraction };
+			return NANX_float32(Nan::MakeCallback(Nan::GetCurrentContext()->Global(), m_callback, countof(argv), argv));
+		}
+		#if B2_ENABLE_PARTICLE
+		float32 ReportParticle(const b2ParticleSystem* particleSystem, int32 index, const b2Vec2& point, const b2Vec2& normal, float32 fraction)
+		{
+			// TODO:
+			return b2RayCastCallback::ReportParticle(particleSystem, index, point, normal, fraction);
+		}
+		bool ShouldQueryParticleSystem(const b2ParticleSystem* particleSystem)
+		{
+			// TODO:
+			return b2RayCastCallback::ShouldQueryParticleSystem(particleSystem);
+		}
+		#endif
+	};
 
 private:
 	b2World m_world;
-	Persistent<Object> m_destruction_listener;
+	Nan::Persistent<v8::Object> m_destruction_listener;
 	WrapDestructionListener m_wrap_destruction_listener;
-	Persistent<Object> m_contact_filter;
+	Nan::Persistent<v8::Object> m_contact_filter;
 	WrapContactFilter m_wrap_contact_filter;
-	Persistent<Object> m_contact_listener;
+	Nan::Persistent<v8::Object> m_contact_listener;
 	WrapContactListener m_wrap_contact_listener;
-	Persistent<Object> m_draw;
+	Nan::Persistent<v8::Object> m_draw;
 	WrapDraw m_wrap_draw;
-
 private:
 	WrapWorld(const b2Vec2& gravity) :
 		m_world(gravity),
@@ -6450,1263 +7675,1380 @@ private:
 		m_world.SetContactFilter(NULL);
 		m_world.SetContactListener(NULL);
 		m_world.SetDebugDraw(NULL);
-
-		NanDisposePersistent(m_destruction_listener);
-		NanDisposePersistent(m_contact_filter);
-		NanDisposePersistent(m_contact_listener);
-		NanDisposePersistent(m_draw);
+		m_destruction_listener.Reset();
+		m_contact_filter.Reset();
+		m_contact_listener.Reset();
+		m_draw.Reset();
 	}
-
+public:
+	b2World* Peek() { return &m_world; }
+public:
+	static WrapWorld* GetWrap(const b2World* world)
+	{
+		//return static_cast<WrapWorld*>(world->GetUserData());
+		return NULL;
+	}
+	static void SetWrap(b2World* world, WrapWorld* wrap)
+	{
+		//world->SetUserData(wrap);
+	}
+public:
+	static WrapWorld* Unwrap(v8::Local<v8::Value> value) { return (value->IsObject())?(Unwrap(v8::Local<v8::Object>::Cast(value))):(NULL); }
+	static WrapWorld* Unwrap(v8::Local<v8::Object> object) { return Nan::ObjectWrap::Unwrap<WrapWorld>(object); }
+	static b2World* Peek(v8::Local<v8::Value> value) { WrapWorld* wrap = Unwrap(value); return (wrap)?(wrap->Peek()):(NULL); }
+public:
+	static NAN_MODULE_INIT(Init)
+	{
+		v8::Local<v8::Function> constructor = GetConstructor();
+		target->Set(constructor->GetName(), constructor);
+	}
+	static v8::Local<v8::Function> GetConstructor()
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::FunctionTemplate> function_template = GetFunctionTemplate();
+		v8::Local<v8::Function> constructor = function_template->GetFunction();
+		return scope.Escape(constructor);
+	}
+	static v8::Local<v8::FunctionTemplate> GetFunctionTemplate()
+	{
+		Nan::EscapableHandleScope scope;
+		static Nan::Persistent<v8::FunctionTemplate> g_function_template;
+		if (g_function_template.IsEmpty())
+		{
+			v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(New);
+			g_function_template.Reset(function_template);
+			function_template->SetClassName(NANX_SYMBOL("b2World"));
+			function_template->InstanceTemplate()->SetInternalFieldCount(1);
+			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			NANX_METHOD_APPLY(prototype_template, SetDestructionListener)
+			NANX_METHOD_APPLY(prototype_template, SetContactFilter)
+			NANX_METHOD_APPLY(prototype_template, SetContactListener)
+			NANX_METHOD_APPLY(prototype_template, SetDebugDraw)
+			NANX_METHOD_APPLY(prototype_template, CreateBody)
+			NANX_METHOD_APPLY(prototype_template, DestroyBody)
+			NANX_METHOD_APPLY(prototype_template, CreateJoint)
+			NANX_METHOD_APPLY(prototype_template, DestroyJoint)
+			NANX_METHOD_APPLY(prototype_template, Step)
+			NANX_METHOD_APPLY(prototype_template, ClearForces)
+			NANX_METHOD_APPLY(prototype_template, DrawDebugData)
+			NANX_METHOD_APPLY(prototype_template, QueryAABB)
+			#if B2_ENABLE_PARTICLE
+			NANX_METHOD_APPLY(prototype_template, QueryShapeAABB)
+			#endif
+			NANX_METHOD_APPLY(prototype_template, RayCast)
+			NANX_METHOD_APPLY(prototype_template, GetBodyList)
+			NANX_METHOD_APPLY(prototype_template, GetJointList)
+			NANX_METHOD_APPLY(prototype_template, GetContactList)
+			NANX_METHOD_APPLY(prototype_template, SetAllowSleeping)
+			NANX_METHOD_APPLY(prototype_template, GetAllowSleeping)
+			NANX_METHOD_APPLY(prototype_template, SetWarmStarting)
+			NANX_METHOD_APPLY(prototype_template, GetWarmStarting)
+			NANX_METHOD_APPLY(prototype_template, SetContinuousPhysics)
+			NANX_METHOD_APPLY(prototype_template, GetContinuousPhysics)
+			NANX_METHOD_APPLY(prototype_template, SetSubStepping)
+			NANX_METHOD_APPLY(prototype_template, GetSubStepping)
+			NANX_METHOD_APPLY(prototype_template, GetBodyCount)
+			NANX_METHOD_APPLY(prototype_template, GetJointCount)
+			NANX_METHOD_APPLY(prototype_template, GetContactCount)
+			NANX_METHOD_APPLY(prototype_template, SetGravity)
+			NANX_METHOD_APPLY(prototype_template, GetGravity)
+			NANX_METHOD_APPLY(prototype_template, IsLocked)
+			NANX_METHOD_APPLY(prototype_template, SetAutoClearForces)
+			NANX_METHOD_APPLY(prototype_template, GetAutoClearForces)
+			#if B2_ENABLE_PARTICLE
+			NANX_METHOD_APPLY(prototype_template, CreateParticleSystem)
+			NANX_METHOD_APPLY(prototype_template, DestroyParticleSystem)
+			NANX_METHOD_APPLY(prototype_template, CalculateReasonableParticleIterations)
+			#endif
+		}
+		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
+		return scope.Escape(function_template);
+	}
+	static v8::Local<v8::Object> NewInstance(const b2Vec2& gravity)
+	{
+		Nan::EscapableHandleScope scope;
+		v8::Local<v8::Function> constructor = GetConstructor();
+		v8::Local<v8::Object> instance = constructor->NewInstance();
+		WrapWorld* wrap = new WrapWorld(gravity);
+		wrap->Wrap(instance);
+		return scope.Escape(instance);
+	}
 private:
-	static NAN_METHOD(New);
-
-	CLASS_METHOD_DECLARE(SetDestructionListener)
-	CLASS_METHOD_DECLARE(SetContactFilter)
-	CLASS_METHOD_DECLARE(SetContactListener)
-	CLASS_METHOD_DECLARE(SetDebugDraw)
-	CLASS_METHOD_DECLARE(CreateBody)
-	CLASS_METHOD_DECLARE(DestroyBody)
-	CLASS_METHOD_DECLARE(CreateJoint)
-	CLASS_METHOD_DECLARE(DestroyJoint)
-	CLASS_METHOD_DECLARE(Step)
-	CLASS_METHOD_DECLARE(ClearForces)
-	CLASS_METHOD_DECLARE(DrawDebugData)
-	CLASS_METHOD_DECLARE(QueryAABB)
-	CLASS_METHOD_DECLARE(RayCast)
-	CLASS_METHOD_DECLARE(GetBodyList)
-	CLASS_METHOD_DECLARE(GetJointList)
-	CLASS_METHOD_DECLARE(GetContactList)
-	CLASS_METHOD_DECLARE(SetAllowSleeping)
-	CLASS_METHOD_DECLARE(GetAllowSleeping)
-	CLASS_METHOD_DECLARE(SetWarmStarting)
-	CLASS_METHOD_DECLARE(GetWarmStarting)
-	CLASS_METHOD_DECLARE(SetContinuousPhysics)
-	CLASS_METHOD_DECLARE(GetContinuousPhysics)
-	CLASS_METHOD_DECLARE(SetSubStepping)
-	CLASS_METHOD_DECLARE(GetSubStepping)
+	static NAN_METHOD(New)
+	{
+		if (info.IsConstructCall())
+		{
+			WrapVec2* wrap_gravity = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			WrapWorld* wrap = new WrapWorld(wrap_gravity->GetVec2());
+			wrap->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}
+		else
+		{
+			v8::Local<v8::Function> constructor = GetConstructor();
+			info.GetReturnValue().Set(constructor->NewInstance());
+		}
+	}
+	NANX_METHOD(SetDestructionListener)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		if (info[0]->IsObject())
+		{
+			wrap->m_destruction_listener.Reset(info[0].As<v8::Object>());
+		}
+		else
+		{
+			wrap->m_destruction_listener.Reset();
+		}
+	}
+	NANX_METHOD(SetContactFilter)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		if (info[0]->IsObject())
+		{
+			wrap->m_contact_filter.Reset(info[0].As<v8::Object>());
+		}
+		else
+		{
+			wrap->m_contact_filter.Reset();
+		}
+	}
+	NANX_METHOD(SetContactListener)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		if (info[0]->IsObject())
+		{
+			wrap->m_contact_listener.Reset(info[0].As<v8::Object>());
+		}
+		else
+		{
+			wrap->m_contact_listener.Reset();
+		}
+	}
+	NANX_METHOD(SetDebugDraw)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		if (info[0]->IsObject())
+		{
+			wrap->m_draw.Reset(info[0].As<v8::Object>());
+		}
+		else
+		{
+			wrap->m_draw.Reset();
+		}
+	}
+	NANX_METHOD(CreateBody)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		WrapBodyDef* wrap_bd = WrapBodyDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		// create box2d body
+		b2Body* body = wrap->m_world.CreateBody(&wrap_bd->UseBodyDef());
+		// create javascript body object
+		v8::Local<v8::Object> h_body = WrapBody::NewInstance();
+		WrapBody* wrap_body = WrapBody::Unwrap(h_body);
+		// set up javascript body object
+		wrap_body->SetupObject(info.This(), wrap_bd, body);
+		info.GetReturnValue().Set(h_body);
+	}
+	NANX_METHOD(DestroyBody)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> h_body = v8::Local<v8::Object>::Cast(info[0]);
+		WrapBody* wrap_body = WrapBody::Unwrap(h_body);
+		// delete box2d body
+		wrap->m_world.DestroyBody(wrap_body->Peek());
+		// reset javascript body object
+		wrap_body->ResetObject();
+	}
+	NANX_METHOD(CreateJoint)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		WrapJointDef* wrap_jd = WrapJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		switch (wrap_jd->GetJointDef().type)
+		{
+		case e_unknownJoint:
+		default:
+			info.GetReturnValue().SetNull();
+			break;
+		case e_revoluteJoint:
+		{
+			WrapRevoluteJointDef* wrap_revolute_jd = WrapRevoluteJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d revolute joint
+			b2RevoluteJoint* revolute_joint = static_cast<b2RevoluteJoint*>(wrap->m_world.CreateJoint(&wrap_revolute_jd->UseJointDef()));
+			// create javascript revolute joint object
+			v8::Local<v8::Object> h_revolute_joint = WrapRevoluteJoint::NewInstance();
+			WrapRevoluteJoint* wrap_revolute_joint = WrapRevoluteJoint::Unwrap(h_revolute_joint);
+			// set up javascript revolute joint object
+			wrap_revolute_joint->SetupObject(info.This(), wrap_revolute_jd, revolute_joint);
+			info.GetReturnValue().Set(h_revolute_joint);
+			break;
+		}
+		case e_prismaticJoint:
+		{
+			WrapPrismaticJointDef* wrap_prismatic_jd = WrapPrismaticJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d prismatic joint
+			b2PrismaticJoint* prismatic_joint = static_cast<b2PrismaticJoint*>(wrap->m_world.CreateJoint(&wrap_prismatic_jd->UseJointDef()));
+			// create javascript prismatic joint object
+			v8::Local<v8::Object> h_prismatic_joint = WrapPrismaticJoint::NewInstance();
+			WrapPrismaticJoint* wrap_prismatic_joint = WrapPrismaticJoint::Unwrap(h_prismatic_joint);
+			// set up javascript prismatic joint object
+			wrap_prismatic_joint->SetupObject(info.This(), wrap_prismatic_jd, prismatic_joint);
+			info.GetReturnValue().Set(h_prismatic_joint);
+			break;
+		}
+		case e_distanceJoint:
+		{
+			WrapDistanceJointDef* wrap_distance_jd = WrapDistanceJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d distance joint
+			b2DistanceJoint* distance_joint = static_cast<b2DistanceJoint*>(wrap->m_world.CreateJoint(&wrap_distance_jd->UseJointDef()));
+			// create javascript distance joint object
+			v8::Local<v8::Object> h_distance_joint = WrapDistanceJoint::NewInstance();
+			WrapDistanceJoint* wrap_distance_joint = WrapDistanceJoint::Unwrap(h_distance_joint);
+			// set up javascript distance joint object
+			wrap_distance_joint->SetupObject(info.This(), wrap_distance_jd, distance_joint);
+			info.GetReturnValue().Set(h_distance_joint);
+			break;
+		}
+		case e_pulleyJoint:
+		{
+			WrapPulleyJointDef* wrap_pulley_jd = WrapPulleyJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d pulley joint
+			b2PulleyJoint* pulley_joint = static_cast<b2PulleyJoint*>(wrap->m_world.CreateJoint(&wrap_pulley_jd->UseJointDef()));
+			// create javascript pulley joint object
+			v8::Local<v8::Object> h_pulley_joint = WrapPulleyJoint::NewInstance();
+			WrapPulleyJoint* wrap_pulley_joint = WrapPulleyJoint::Unwrap(h_pulley_joint);
+			// set up javascript pulley joint object
+			wrap_pulley_joint->SetupObject(info.This(), wrap_pulley_jd, pulley_joint);
+			info.GetReturnValue().Set(h_pulley_joint);
+			break;
+		}
+		case e_mouseJoint:
+		{
+			WrapMouseJointDef* wrap_mouse_jd = WrapMouseJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d mouse joint
+			b2MouseJoint* mouse_joint = static_cast<b2MouseJoint*>(wrap->m_world.CreateJoint(&wrap_mouse_jd->UseJointDef()));
+			// create javascript mouse joint object
+			v8::Local<v8::Object> h_mouse_joint = WrapMouseJoint::NewInstance();
+			WrapMouseJoint* wrap_mouse_joint = WrapMouseJoint::Unwrap(h_mouse_joint);
+			// set up javascript mouse joint object
+			wrap_mouse_joint->SetupObject(info.This(), wrap_mouse_jd, mouse_joint);
+			info.GetReturnValue().Set(h_mouse_joint);
+			break;
+		}
+		case e_gearJoint:
+		{
+			WrapGearJointDef* wrap_gear_jd = WrapGearJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d gear joint
+			b2GearJoint* gear_joint = static_cast<b2GearJoint*>(wrap->m_world.CreateJoint(&wrap_gear_jd->UseJointDef()));
+			// create javascript gear joint object
+			v8::Local<v8::Object> h_gear_joint = WrapGearJoint::NewInstance();
+			WrapGearJoint* wrap_gear_joint = WrapGearJoint::Unwrap(h_gear_joint);
+			// set up javascript gear joint object
+			wrap_gear_joint->SetupObject(info.This(), wrap_gear_jd, gear_joint);
+			info.GetReturnValue().Set(h_gear_joint);
+			break;
+		}
+		case e_wheelJoint:
+		{
+			WrapWheelJointDef* wrap_wheel_jd = WrapWheelJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d wheel joint
+			b2WheelJoint* wheel_joint = static_cast<b2WheelJoint*>(wrap->m_world.CreateJoint(&wrap_wheel_jd->UseJointDef()));
+			// create javascript wheel joint object
+			v8::Local<v8::Object> h_wheel_joint = WrapWheelJoint::NewInstance();
+			WrapWheelJoint* wrap_wheel_joint = WrapWheelJoint::Unwrap(h_wheel_joint);
+			// set up javascript wheel joint object
+			wrap_wheel_joint->SetupObject(info.This(), wrap_wheel_jd, wheel_joint);
+			info.GetReturnValue().Set(h_wheel_joint);
+			break;
+		}
+	    case e_weldJoint:
+		{
+			WrapWeldJointDef* wrap_weld_jd = WrapWeldJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d weld joint
+			b2WeldJoint* weld_joint = static_cast<b2WeldJoint*>(wrap->m_world.CreateJoint(&wrap_weld_jd->UseJointDef()));
+			// create javascript weld joint object
+			v8::Local<v8::Object> h_weld_joint = WrapWeldJoint::NewInstance();
+			WrapWeldJoint* wrap_weld_joint = WrapWeldJoint::Unwrap(h_weld_joint);
+			// set up javascript weld joint object
+			wrap_weld_joint->SetupObject(info.This(), wrap_weld_jd, weld_joint);
+			info.GetReturnValue().Set(h_weld_joint);
+			break;
+		}
+		case e_frictionJoint:
+		{
+			WrapFrictionJointDef* wrap_friction_jd = WrapFrictionJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d friction joint
+			b2FrictionJoint* friction_joint = static_cast<b2FrictionJoint*>(wrap->m_world.CreateJoint(&wrap_friction_jd->UseJointDef()));
+			// create javascript friction joint object
+			v8::Local<v8::Object> h_friction_joint = WrapFrictionJoint::NewInstance();
+			WrapFrictionJoint* wrap_friction_joint = WrapFrictionJoint::Unwrap(h_friction_joint);
+			// set up javascript friction joint object
+			wrap_friction_joint->SetupObject(info.This(), wrap_friction_jd, friction_joint);
+			info.GetReturnValue().Set(h_friction_joint);
+			break;
+		}
+		case e_ropeJoint:
+		{
+			WrapRopeJointDef* wrap_rope_jd = WrapRopeJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d rope joint
+			b2RopeJoint* rope_joint = static_cast<b2RopeJoint*>(wrap->m_world.CreateJoint(&wrap_rope_jd->UseJointDef()));
+			// create javascript rope joint object
+			v8::Local<v8::Object> h_rope_joint = WrapRopeJoint::NewInstance();
+			WrapRopeJoint* wrap_rope_joint = WrapRopeJoint::Unwrap(h_rope_joint);
+			// set up javascript rope joint object
+			wrap_rope_joint->SetupObject(info.This(), wrap_rope_jd, rope_joint);
+			info.GetReturnValue().Set(h_rope_joint);
+			break;
+		}
+		case e_motorJoint:
+		{
+			WrapMotorJointDef* wrap_motor_jd = WrapMotorJointDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+			// create box2d motor joint
+			b2MotorJoint* motor_joint = static_cast<b2MotorJoint*>(wrap->m_world.CreateJoint(&wrap_motor_jd->UseJointDef()));
+			// create javascript motor joint object
+			v8::Local<v8::Object> h_motor_joint = WrapMotorJoint::NewInstance();
+			WrapMotorJoint* wrap_motor_joint = WrapMotorJoint::Unwrap(h_motor_joint);
+			// set up javascript motor joint object
+			wrap_motor_joint->SetupObject(info.This(), wrap_motor_jd, motor_joint);
+			info.GetReturnValue().Set(h_motor_joint);
+			break;
+		}
+		}
+	}
+	NANX_METHOD(DestroyJoint)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> h_joint = v8::Local<v8::Object>::Cast(info[0]);
+		WrapJoint* wrap_joint = WrapJoint::Unwrap(h_joint);
+		switch (wrap_joint->GetJoint()->GetType())
+		{
+		case e_unknownJoint:
+			break;
+		case e_revoluteJoint:
+		{
+			v8::Local<v8::Object> h_revolute_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapRevoluteJoint* wrap_revolute_joint = WrapRevoluteJoint::Unwrap(h_revolute_joint);
+			// delete box2d revolute joint
+			wrap->m_world.DestroyJoint(wrap_revolute_joint->GetJoint());
+			// reset javascript revolute joint object
+			wrap_revolute_joint->ResetObject();
+			break;
+		}
+		case e_prismaticJoint:
+		{
+			v8::Local<v8::Object> h_prismatic_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapPrismaticJoint* wrap_prismatic_joint = WrapPrismaticJoint::Unwrap(h_prismatic_joint);
+			// delete box2d prismatic joint
+			wrap->m_world.DestroyJoint(wrap_prismatic_joint->GetJoint());
+			// reset javascript prismatic joint object
+			wrap_prismatic_joint->ResetObject();
+			break;
+		}
+		case e_distanceJoint:
+		{
+			v8::Local<v8::Object> h_distance_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapDistanceJoint* wrap_distance_joint = WrapDistanceJoint::Unwrap(h_distance_joint);
+			// delete box2d distance joint
+			wrap->m_world.DestroyJoint(wrap_distance_joint->GetJoint());
+			// reset javascript distance joint object
+			wrap_distance_joint->ResetObject();
+			break;
+		}
+		case e_pulleyJoint:
+		{
+			v8::Local<v8::Object> h_pulley_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapPulleyJoint* wrap_pulley_joint = WrapPulleyJoint::Unwrap(h_pulley_joint);
+			// delete box2d pulley joint
+			wrap->m_world.DestroyJoint(wrap_pulley_joint->GetJoint());
+			// reset javascript pulley joint object
+			wrap_pulley_joint->ResetObject();
+			break;
+		}
+		case e_mouseJoint:
+		{
+			v8::Local<v8::Object> h_mouse_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapMouseJoint* wrap_mouse_joint = WrapMouseJoint::Unwrap(h_mouse_joint);
+			// delete box2d mouse joint
+			wrap->m_world.DestroyJoint(wrap_mouse_joint->GetJoint());
+			// reset javascript mouse joint object
+			wrap_mouse_joint->ResetObject();
+			break;
+		}
+		case e_gearJoint:
+		{
+			v8::Local<v8::Object> h_gear_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapGearJoint* wrap_gear_joint = WrapGearJoint::Unwrap(h_gear_joint);
+			// delete box2d gear joint
+			wrap->m_world.DestroyJoint(wrap_gear_joint->GetJoint());
+			// reset javascript gear joint object
+			wrap_gear_joint->ResetObject();
+			break;
+		}
+		case e_wheelJoint:
+		{
+			v8::Local<v8::Object> h_wheel_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapWheelJoint* wrap_wheel_joint = WrapWheelJoint::Unwrap(h_wheel_joint);
+			// delete box2d wheel joint
+			wrap->m_world.DestroyJoint(wrap_wheel_joint->GetJoint());
+			// reset javascript wheel joint object
+			wrap_wheel_joint->ResetObject();
+			break;
+		}
+	    case e_weldJoint:
+		{
+			v8::Local<v8::Object> h_weld_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapWeldJoint* wrap_weld_joint = WrapWeldJoint::Unwrap(h_weld_joint);
+			// delete box2d weld joint
+			wrap->m_world.DestroyJoint(wrap_weld_joint->GetJoint());
+			// reset javascript weld joint object
+			wrap_weld_joint->ResetObject();
+			break;
+		}
+		case e_frictionJoint:
+		{
+			v8::Local<v8::Object> h_friction_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapFrictionJoint* wrap_friction_joint = WrapFrictionJoint::Unwrap(h_friction_joint);
+			// delete box2d friction joint
+			wrap->m_world.DestroyJoint(wrap_friction_joint->GetJoint());
+			// reset javascript friction joint object
+			wrap_friction_joint->ResetObject();
+			break;
+		}
+		case e_ropeJoint:
+		{
+			v8::Local<v8::Object> h_rope_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapRopeJoint* wrap_rope_joint = WrapRopeJoint::Unwrap(h_rope_joint);
+			// delete box2d rope joint
+			wrap->m_world.DestroyJoint(wrap_rope_joint->GetJoint());
+			// reset javascript rope joint object
+			wrap_rope_joint->ResetObject();
+			break;
+		}
+		case e_motorJoint:
+		{
+			v8::Local<v8::Object> h_motor_joint = v8::Local<v8::Object>::Cast(info[0]);
+			WrapMotorJoint* wrap_motor_joint = WrapMotorJoint::Unwrap(h_motor_joint);
+			// delete box2d motor joint
+			wrap->m_world.DestroyJoint(wrap_motor_joint->GetJoint());
+			// reset javascript motor joint object
+			wrap_motor_joint->ResetObject();
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	NANX_METHOD(Step)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		float32 timeStep = NANX_float32(info[0]);
+		int32 velocityIterations = NANX_int32(info[1]);
+		int32 positionIterations = NANX_int32(info[2]);
+		#if B2_ENABLE_PARTICLE
+		int32 particleIterations = (info.Length() > 3)?(NANX_int32(info[3])):(wrap->m_world.CalculateReasonableParticleIterations(timeStep));
+		wrap->m_world.Step(timeStep, velocityIterations, positionIterations, particleIterations);
+		#else
+		wrap->m_world.Step(timeStep, velocityIterations, positionIterations);
+		#endif
+	}
+	NANX_METHOD(ClearForces)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.ClearForces();
+	}
+	NANX_METHOD(DrawDebugData)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		if (!wrap->m_draw.IsEmpty())
+		{
+			//v8::Local<v8::Object> h_draw = Nan::New<v8::Object>(wrap->m_draw);
+			//WrapDraw* wrap_draw = WrapDraw::Unwrap(h_draw);
+			//wrap->m_world.SetDebugDraw(&wrap_draw->m_wrap_draw);
+			//wrap->m_world.DrawDebugData();
+			//wrap->m_world.SetDebugDraw(NULL);
+			v8::Local<v8::Object> h_draw = Nan::New<v8::Object>(wrap->m_draw);
+			v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_draw->Get(NANX_SYMBOL("GetFlags")));
+			uint32 flags = NANX_uint32(Nan::MakeCallback(h_draw, h_method, 0, NULL));
+			wrap->m_wrap_draw.SetFlags(flags);
+			wrap->m_world.DrawDebugData();
+		}
+	}
+	NANX_METHOD(QueryAABB)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Function> callback = v8::Local<v8::Function>::Cast(info[0]);
+		WrapAABB* wrap_mass_data = WrapAABB::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapQueryCallback wrap_callback(callback);
+		wrap->m_world.QueryAABB(&wrap_callback, wrap_mass_data->GetAABB());
+	}
+	#if B2_ENABLE_PARTICLE
+	NANX_METHOD(QueryShapeAABB)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Function> callback = v8::Local<v8::Function>::Cast(info[0]);
+		WrapShape* wrap_shape = WrapShape::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	    WrapTransform* wrap_transform = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapQueryCallback wrap_callback(callback);
+		wrap->m_world.QueryShapeAABB(&wrap_callback, wrap_shape->GetShape(), wrap_transform->GetTransform());
+	}
+	#endif
+	NANX_METHOD(RayCast)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Function> callback = v8::Local<v8::Function>::Cast(info[0]);
+		WrapVec2* point1 = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+		WrapVec2* point2 = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+		WrapRayCastCallback wrap_callback(callback);
+		wrap->m_world.RayCast(&wrap_callback, point1->GetVec2(), point2->GetVec2());
+	}
+	NANX_METHOD(GetBodyList)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		b2Body* body = wrap->m_world.GetBodyList();
+		if (body)
+		{
+			// get body internal data
+			WrapBody* wrap_body = WrapBody::GetWrap(body);
+			info.GetReturnValue().Set(wrap_body->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetJointList)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		b2Joint* joint = wrap->m_world.GetJointList();
+		if (joint)
+		{
+			// get joint internal data
+			WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
+			info.GetReturnValue().Set(wrap_joint->handle());
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(GetContactList)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		b2Contact* contact = wrap->m_world.GetContactList();
+		if (contact)
+		{
+			info.GetReturnValue().Set(WrapContact::NewInstance(contact));
+		}
+		else
+		{
+			info.GetReturnValue().SetNull();
+		}
+	}
+	NANX_METHOD(SetAllowSleeping)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.SetAllowSleeping(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetAllowSleeping)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetAllowSleeping()));
+	}
+	NANX_METHOD(SetWarmStarting)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.SetWarmStarting(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetWarmStarting)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetWarmStarting()));
+	}
+	NANX_METHOD(SetContinuousPhysics)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.SetContinuousPhysics(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetContinuousPhysics)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetContinuousPhysics()));
+	}
+	NANX_METHOD(SetSubStepping)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.SetSubStepping(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetSubStepping)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetSubStepping()));
+	}
 //	int32 GetProxyCount() const;
-	CLASS_METHOD_DECLARE(GetBodyCount)
-	CLASS_METHOD_DECLARE(GetJointCount)
-	CLASS_METHOD_DECLARE(GetContactCount)
+	NANX_METHOD(GetBodyCount)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetBodyCount()));
+	}
+	NANX_METHOD(GetJointCount)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetJointCount()));
+	}
+	NANX_METHOD(GetContactCount)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetContactCount()));
+	}
 //	int32 GetTreeHeight() const;
 //	int32 GetTreeBalance() const;
 //	float32 GetTreeQuality() const;
-	CLASS_METHOD_DECLARE(SetGravity)
-	CLASS_METHOD_DECLARE(GetGravity)
-	CLASS_METHOD_DECLARE(IsLocked)
-	CLASS_METHOD_DECLARE(SetAutoClearForces)
-	CLASS_METHOD_DECLARE(GetAutoClearForces)
+	NANX_METHOD(SetGravity)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		WrapVec2* wrap_gravity = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		wrap->m_world.SetGravity(wrap_gravity->GetVec2());
+	}
+	NANX_METHOD(GetGravity)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(WrapVec2::NewInstance(wrap->m_world.GetGravity()));
+	}
+	NANX_METHOD(IsLocked)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.IsLocked()));
+	}
+	NANX_METHOD(SetAutoClearForces)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		wrap->m_world.SetAutoClearForces(NANX_bool(info[0]));
+	}
+	NANX_METHOD(GetAutoClearForces)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.GetAutoClearForces()));
+	}
 //	void ShiftOrigin(const b2Vec2& newOrigin);
 ///	const b2ContactManager& GetContactManager() const;
 ///	const b2Profile& GetProfile() const;
 ///	void Dump();
+	#if B2_ENABLE_PARTICLE
+	NANX_METHOD(CreateParticleSystem)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		WrapParticleSystemDef* wrap_psd = WrapParticleSystemDef::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+		// create box2d particle system
+		b2ParticleSystem* system = wrap->m_world.CreateParticleSystem(&wrap_psd->UseParticleSystemDef());
+		// create javascript particle system object
+		v8::Local<v8::Object> h_particle_system = WrapParticleSystem::NewInstance();
+		WrapParticleSystem* wrap_particle_system = WrapParticleSystem::Unwrap(h_particle_system);
+		// set up javascript particle system object
+		wrap_particle_system->SetupObject(info.This(), wrap_psd, system);
+		info.GetReturnValue().Set(h_particle_system);
+	}
+	NANX_METHOD(DestroyParticleSystem)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		v8::Local<v8::Object> h_particle_system = v8::Local<v8::Object>::Cast(info[0]);
+		WrapParticleSystem* wrap_particle_system = WrapParticleSystem::Unwrap(h_particle_system);
+		// delete box2d particle system
+		wrap->m_world.DestroyParticleSystem(wrap_particle_system->GetParticleSystem());
+		// reset javascript system object
+		wrap_particle_system->ResetObject();
+	}
+	NANX_METHOD(CalculateReasonableParticleIterations)
+	{
+		WrapWorld* wrap = Unwrap(info.This());
+		float32 timeStep = NANX_float32(info[0]);
+		info.GetReturnValue().Set(Nan::New(wrap->m_world.CalculateReasonableParticleIterations(timeStep)));
+	}
+	#endif
 };
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2Joint* joint)
 {
-	NanScope();
 	if (!m_that->m_destruction_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_destruction_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("SayGoodbyeJoint")));
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeJoint")));
 		// get joint internal data
 		WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
-		Local<Object> h_joint = NanObjectWrapHandle(wrap_joint);
-		Handle<Value> argv[] = { h_joint };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_joint = wrap_joint->handle();
+		v8::Local<v8::Value> argv[] = { h_joint };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2Fixture* fixture)
 {
-	NanScope();
 	if (!m_that->m_destruction_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_destruction_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("SayGoodbyeFixture")));
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeFixture")));
 		// get fixture internal data
 		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-		Local<Object> h_fixture = NanObjectWrapHandle(wrap_fixture);
-		Handle<Value> argv[] = { h_fixture };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_fixture = wrap_fixture->handle();
+		v8::Local<v8::Value> argv[] = { h_fixture };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
+#if B2_ENABLE_PARTICLE
+
+void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleGroup* group)
+{
+	if (!m_that->m_destruction_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeParticleGroup")));
+		// get particle group internal data
+		WrapParticleGroup* wrap_group = WrapParticleGroup::GetWrap(group);
+		v8::Local<v8::Object> h_group = wrap_group->handle();
+		v8::Local<v8::Value> argv[] = { h_group };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleSystem* particleSystem, int32 index)
+{
+	if (!m_that->m_destruction_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeParticle")));
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
+		///	v8::Local<v8::Object> h_system = wrap_system->handle();
+		///	v8::Local<v8::Value> argv[] = { h_system, Nan::New(index) };
+		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+#endif
+
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB)
 {
-	NanScope();
 	if (!m_that->m_contact_filter.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_contact_filter);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("ShouldCollide")));
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollide")));
 		// get fixture internal data
 		WrapFixture* wrap_fixtureA = WrapFixture::GetWrap(fixtureA);
 		WrapFixture* wrap_fixtureB = WrapFixture::GetWrap(fixtureB);
-		Local<Object> h_fixtureA = NanObjectWrapHandle(wrap_fixtureA);
-		Local<Object> h_fixtureB = NanObjectWrapHandle(wrap_fixtureB);
-		Handle<Value> argv[] = { h_fixtureA, h_fixtureB };
-		return NanMakeCallback(h_that, h_method, countof(argv), argv)->BooleanValue();
+		v8::Local<v8::Object> h_fixtureA = wrap_fixtureA->handle();
+		v8::Local<v8::Object> h_fixtureB = wrap_fixtureB->handle();
+		v8::Local<v8::Value> argv[] = { h_fixtureA, h_fixtureB };
+		return NANX_bool(Nan::MakeCallback(h_that, h_method, countof(argv), argv));
 	}
 	return b2ContactFilter::ShouldCollide(fixtureA, fixtureB);
 }
 
+#if B2_ENABLE_PARTICLE
+
+bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex)
+{
+	if (!m_that->m_contact_filter.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollideFixtureParticle")));
+		// get fixture internal data
+		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
+		v8::Local<v8::Object> h_fixture = wrap_fixture->handle();
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
+		///	v8::Local<v8::Object> h_system = wrap_system->handle();
+		///	v8::Local<v8::Value> argv[] = { h_fixture, h_system, Nan::New(particleIndex) };
+		///	return NANX_bool(Nan::MakeCallback(h_that, h_method, countof(argv), argv));
+	}
+	return b2ContactFilter::ShouldCollide(fixture, particleSystem, particleIndex);
+}
+
+bool WrapWorld::WrapContactFilter::ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB)
+{
+	if (!m_that->m_contact_filter.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollideParticleParticle")));
+		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
+		///	v8::Local<v8::Object> h_system = wrap_system->handle();
+		///	v8::Local<v8::Value> argv[] = { h_system, Nan::New(particleIndexA), Nan::New(particleIndexB) };
+		///	return NANX_bool(Nan::MakeCallback(h_that, h_method, countof(argv), argv));
+	}
+	return b2ContactFilter::ShouldCollide(particleSystem, particleIndexA, particleIndexB);
+}
+
+#endif
+
 void WrapWorld::WrapContactListener::BeginContact(b2Contact* contact)
 {
-	NanScope();
 	if (!m_that->m_contact_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("BeginContact")));
-		Local<Object> h_contact = NanNew<Object>(WrapContact::NewInstance(contact));
-		Handle<Value> argv[] = { h_contact };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContact")));
+		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
+		v8::Local<v8::Value> argv[] = { h_contact };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapContactListener::EndContact(b2Contact* contact)
 {
-	NanScope();
 	if (!m_that->m_contact_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("EndContact")));
-		Local<Object> h_contact = NanNew<Object>(WrapContact::NewInstance(contact));
-		Handle<Value> argv[] = { h_contact };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContact")));
+		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
+		v8::Local<v8::Value> argv[] = { h_contact };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
-void WrapWorld::WrapContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldManifold)
+#if B2_ENABLE_PARTICLE
+
+void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact)
 {
-	NanScope();
 	if (!m_that->m_contact_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("PreSolve")));
-		Local<Object> h_contact = NanNew<Object>(WrapContact::NewInstance(contact));
-		Local<Object> h_oldManifold = NanNew<Object>(WrapManifold::NewInstance(*oldManifold));
-		Handle<Value> argv[] = { h_contact, h_oldManifold };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContactFixtureParticle")));
+		// TODO: get particle system internal data, wrap b2ParticleBodyContact
+		///	v8::Local<v8::Value> argv[] = {};
+		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index)
+{
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContactFixtureParticle")));
+		// TODO: get particle system internal data
+		///	v8::Local<v8::Value> argv[] = {};
+		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact)
+{
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContactParticleParticle")));
+		// TODO: get particle system internal data, wrap b2ParticleContact
+		///	v8::Local<v8::Value> argv[] = {};
+		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+void WrapWorld::WrapContactListener::EndContact(b2ParticleSystem* particleSystem, int32 indexA, int32 indexB)
+{
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContactParticleParticle")));
+		// TODO: get particle system internal data
+		///	v8::Local<v8::Value> argv[] = {};
+		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+	}
+}
+
+#endif
+
+void WrapWorld::WrapContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldManifold)
+{
+	if (!m_that->m_contact_listener.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("PreSolve")));
+		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
+		v8::Local<v8::Object> h_oldManifold = WrapManifold::NewInstance(*oldManifold);
+		v8::Local<v8::Value> argv[] = { h_contact, h_oldManifold };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapContactListener::PostSolve(b2Contact* contact, const b2ContactImpulse* impulse)
 {
-	NanScope();
 	if (!m_that->m_contact_listener.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_contact_listener);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("PostSolve")));
-		Local<Object> h_contact = NanNew<Object>(WrapContact::NewInstance(contact));
-		Local<Object> h_impulse = NanNew<Object>(WrapContactImpulse::NewInstance(*impulse));
-		Handle<Value> argv[] = { h_contact, h_impulse };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("PostSolve")));
+		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
+		v8::Local<v8::Object> h_impulse = WrapContactImpulse::NewInstance(*impulse);
+		v8::Local<v8::Value> argv[] = { h_contact, h_impulse };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDraw::DrawPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawPolygon")));
-		Local<Array> h_vertices = NanNew<Array>(vertexCount);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawPolygon")));
+		v8::Local<v8::Array> h_vertices = Nan::New<v8::Array>(vertexCount);
 		for (int i = 0; i < vertexCount; ++i)
 		{
-			h_vertices->Set(i, NanNew<Object>(WrapVec2::NewInstance(vertices[i])));
+			h_vertices->Set(i, WrapVec2::NewInstance(vertices[i]));
 		}
-		Local<Integer> h_vertexCount = NanNew<Integer>(vertexCount);
-		Local<Object> h_color = NanNew<Object>(WrapColor::NewInstance(color));
-		Handle<Value> argv[] = { h_vertices, h_vertexCount, h_color };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Integer> h_vertexCount = Nan::New(vertexCount);
+		v8::Local<v8::Object> h_color = WrapColor::NewInstance(color);
+		v8::Local<v8::Value> argv[] = { h_vertices, h_vertexCount, h_color };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDraw::DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawSolidPolygon")));
-		Local<Array> h_vertices = NanNew<Array>(vertexCount);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSolidPolygon")));
+		v8::Local<v8::Array> h_vertices = Nan::New<v8::Array>(vertexCount);
 		for (int i = 0; i < vertexCount; ++i)
 		{
-			h_vertices->Set(i, NanNew<Object>(WrapVec2::NewInstance(vertices[i])));
+			h_vertices->Set(i, WrapVec2::NewInstance(vertices[i]));
 		}
-		Local<Integer> h_vertexCount = NanNew<Integer>(vertexCount);
-		Local<Object> h_color = NanNew<Object>(WrapColor::NewInstance(color));
-		Handle<Value> argv[] = { h_vertices, h_vertexCount, h_color };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Integer> h_vertexCount = Nan::New(vertexCount);
+		v8::Local<v8::Object> h_color = WrapColor::NewInstance(color);
+		v8::Local<v8::Value> argv[] = { h_vertices, h_vertexCount, h_color };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDraw::DrawCircle(const b2Vec2& center, float32 radius, const b2Color& color)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawCircle")));
-		Local<Object> h_center = NanNew<Object>(WrapVec2::NewInstance(center));
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawCircle")));
+		v8::Local<v8::Object> h_center = WrapVec2::NewInstance(center);
 		#if defined(_WIN32)
 		if (radius <= 0) { radius = 0.05f; } // hack: bug in Windows release build
 		#endif
-		Local<Number> h_radius = NanNew<Number>(radius);
-		Local<Object> h_color = NanNew<Object>(WrapColor::NewInstance(color));
-		Handle<Value> argv[] = { h_center, h_radius, h_color };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Number> h_radius = Nan::New(radius);
+		v8::Local<v8::Object> h_color = WrapColor::NewInstance(color);
+		v8::Local<v8::Value> argv[] = { h_center, h_radius, h_color };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDraw::DrawSolidCircle(const b2Vec2& center, float32 radius, const b2Vec2& axis, const b2Color& color)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawSolidCircle")));
-		Local<Object> h_center = NanNew<Object>(WrapVec2::NewInstance(center));
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSolidCircle")));
+		v8::Local<v8::Object> h_center = WrapVec2::NewInstance(center);
 		#if defined(_WIN32)
 		if (radius <= 0) { radius = 0.05f; } // hack: bug in Windows release build
 		#endif
-		Local<Number> h_radius = NanNew<Number>(radius);
-		Local<Object> h_axis = NanNew<Object>(WrapVec2::NewInstance(axis));
-		Local<Object> h_color = NanNew<Object>(WrapColor::NewInstance(color));
-		Handle<Value> argv[] = { h_center, h_radius, h_axis, h_color };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Number> h_radius = Nan::New(radius);
+		v8::Local<v8::Object> h_axis = WrapVec2::NewInstance(axis);
+		v8::Local<v8::Object> h_color = WrapColor::NewInstance(color);
+		v8::Local<v8::Value> argv[] = { h_center, h_radius, h_axis, h_color };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
-void WrapWorld::WrapDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color)
+#if B2_ENABLE_PARTICLE
+void WrapWorld::WrapDraw::DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawSegment")));
-		Local<Object> h_p1 = NanNew<Object>(WrapVec2::NewInstance(p1));
-		Local<Object> h_p2 = NanNew<Object>(WrapVec2::NewInstance(p2));
-		Local<Object> h_color = NanNew<Object>(WrapColor::NewInstance(color));
-		Handle<Value> argv[] = { h_p1, h_p2, h_color };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawParticles")));
+		v8::Local<v8::Array> h_centers = Nan::New<v8::Array>(count);
+		for (int i = 0; i < count; ++i)
+		{
+			h_centers->Set(i, WrapVec2::NewInstance(centers[i]));
+		}
+		#if defined(_WIN32)
+		if (radius <= 0) { radius = 0.05f; } // hack: bug in Windows release build
+		#endif
+		v8::Local<v8::Number> h_radius = Nan::New(radius);
+		v8::Local<v8::Integer> h_count = Nan::New(count);
+		if (colors != NULL)
+		{
+			v8::Local<v8::Array> h_colors = Nan::New<v8::Array>(count);
+			for (int i = 0; i < count; ++i)
+			{
+				h_colors->Set(i, WrapParticleColor::NewInstance(colors[i]));
+			}
+			v8::Local<v8::Value> argv[] = { h_centers, h_radius, h_colors, h_count };
+			Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+		}
+		else
+		{
+			v8::Local<v8::Value> argv[] = { h_centers, h_radius, Nan::Null(), h_count };
+			Nan::MakeCallback(h_that, h_method, countof(argv), argv);
+		}
+	}
+}
+#endif
+
+void WrapWorld::WrapDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color)
+{
+	if (!m_that->m_draw.IsEmpty())
+	{
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSegment")));
+		v8::Local<v8::Object> h_p1 = WrapVec2::NewInstance(p1);
+		v8::Local<v8::Object> h_p2 = WrapVec2::NewInstance(p2);
+		v8::Local<v8::Object> h_color = WrapColor::NewInstance(color);
+		v8::Local<v8::Value> argv[] = { h_p1, h_p2, h_color };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
 
 void WrapWorld::WrapDraw::DrawTransform(const b2Transform& xf)
 {
-	NanScope();
 	if (!m_that->m_draw.IsEmpty())
 	{
-		Local<Object> h_that = NanNew<Object>(m_that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_that->Get(NanNew<String>("DrawTransform")));
-		Local<Object> h_xf = NanNew<Object>(WrapTransform::NewInstance(xf));
-		Handle<Value> argv[] = { h_xf };
-		NanMakeCallback(h_that, h_method, countof(argv), argv);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawTransform")));
+		v8::Local<v8::Object> h_xf = WrapTransform::NewInstance(xf);
+		v8::Local<v8::Value> argv[] = { h_xf };
+		Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
 }
-
-void WrapWorld::Init(Handle<Object> exports)
-{
-	Local<FunctionTemplate> tplWorld = NanNew<FunctionTemplate>(New);
-	tplWorld->SetClassName(NanNew<String>("b2World"));
-	tplWorld->InstanceTemplate()->SetInternalFieldCount(1);
-	CLASS_METHOD_APPLY(tplWorld, SetDestructionListener)
-	CLASS_METHOD_APPLY(tplWorld, SetContactFilter)
-	CLASS_METHOD_APPLY(tplWorld, SetContactListener)
-	CLASS_METHOD_APPLY(tplWorld, SetDebugDraw)
-	CLASS_METHOD_APPLY(tplWorld, CreateBody)
-	CLASS_METHOD_APPLY(tplWorld, DestroyBody)
-	CLASS_METHOD_APPLY(tplWorld, CreateJoint)
-	CLASS_METHOD_APPLY(tplWorld, DestroyJoint)
-	CLASS_METHOD_APPLY(tplWorld, Step)
-	CLASS_METHOD_APPLY(tplWorld, ClearForces)
-	CLASS_METHOD_APPLY(tplWorld, DrawDebugData)
-	CLASS_METHOD_APPLY(tplWorld, QueryAABB)
-	CLASS_METHOD_APPLY(tplWorld, RayCast)
-	CLASS_METHOD_APPLY(tplWorld, GetBodyList)
-	CLASS_METHOD_APPLY(tplWorld, GetJointList)
-	CLASS_METHOD_APPLY(tplWorld, GetContactList)
-	CLASS_METHOD_APPLY(tplWorld, SetAllowSleeping)
-	CLASS_METHOD_APPLY(tplWorld, GetAllowSleeping)
-	CLASS_METHOD_APPLY(tplWorld, SetWarmStarting)
-	CLASS_METHOD_APPLY(tplWorld, GetWarmStarting)
-	CLASS_METHOD_APPLY(tplWorld, SetContinuousPhysics)
-	CLASS_METHOD_APPLY(tplWorld, GetContinuousPhysics)
-	CLASS_METHOD_APPLY(tplWorld, SetSubStepping)
-	CLASS_METHOD_APPLY(tplWorld, GetSubStepping)
-	CLASS_METHOD_APPLY(tplWorld, GetBodyCount)
-	CLASS_METHOD_APPLY(tplWorld, GetJointCount)
-	CLASS_METHOD_APPLY(tplWorld, GetContactCount)
-	CLASS_METHOD_APPLY(tplWorld, SetGravity)
-	CLASS_METHOD_APPLY(tplWorld, GetGravity)
-	CLASS_METHOD_APPLY(tplWorld, IsLocked)
-	CLASS_METHOD_APPLY(tplWorld, SetAutoClearForces)
-	CLASS_METHOD_APPLY(tplWorld, GetAutoClearForces)
-	exports->Set(NanNew<String>("b2World"), tplWorld->GetFunction());
-}
-
-NAN_METHOD(WrapWorld::New)
-{
-	NanScope();
-	WrapVec2* wrap_gravity = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapWorld* that = new WrapWorld(wrap_gravity->GetVec2());
-	that->Wrap(args.This());
-	NanReturnValue(args.This());
-}
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetDestructionListener,
-{
-	if (args[0]->IsObject())
-	{
-		NanAssignPersistent(that->m_destruction_listener, args[0].As<Object>());
-	}
-	else
-	{
-		NanDisposePersistent(that->m_destruction_listener);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetContactFilter,
-{
-	if (args[0]->IsObject())
-	{
-		NanAssignPersistent(that->m_contact_filter, args[0].As<Object>());
-	}
-	else
-	{
-		NanDisposePersistent(that->m_contact_filter);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetContactListener,
-{
-	if (args[0]->IsObject())
-	{
-		NanAssignPersistent(that->m_contact_listener, args[0].As<Object>());
-	}
-	else
-	{
-		NanDisposePersistent(that->m_contact_listener);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetDebugDraw,
-{
-	if (args[0]->IsObject())
-	{
-		NanAssignPersistent(that->m_draw, args[0].As<Object>());
-	}
-	else
-	{
-		NanDisposePersistent(that->m_draw);
-	}
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, CreateBody,
-{
-	WrapBodyDef* wrap_bd = node::ObjectWrap::Unwrap<WrapBodyDef>(Local<Object>::Cast(args[0]));
-
-	// create box2d body
-	b2Body* body = that->m_world.CreateBody(&wrap_bd->UseBodyDef());
-
-	// create javascript body object
-	Local<Object> h_body = NanNew<Object>(WrapBody::NewInstance());
-	WrapBody* wrap_body = node::ObjectWrap::Unwrap<WrapBody>(h_body);
-
-	// set up javascript body object
-	wrap_body->SetupObject(args.This(), wrap_bd, body);
-
-	NanReturnValue(h_body);
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, DestroyBody,
-{
-	Local<Object> h_body = Local<Object>::Cast(args[0]);
-	WrapBody* wrap_body = node::ObjectWrap::Unwrap<WrapBody>(h_body);
-
-	// delete box2d body
-	that->m_world.DestroyBody(wrap_body->GetBody());
-
-	// reset javascript body object
-	wrap_body->ResetObject();
-
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, CreateJoint,
-{
-	WrapJointDef* wrap_jd = node::ObjectWrap::Unwrap<WrapJointDef>(Local<Object>::Cast(args[0]));
-
-	switch (wrap_jd->GetJointDef().type)
-	{
-	case e_unknownJoint:
-		break;
-	case e_revoluteJoint:
-	{
-		WrapRevoluteJointDef* wrap_revolute_jd = node::ObjectWrap::Unwrap<WrapRevoluteJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d revolute joint
-		b2RevoluteJoint* revolute_joint = (b2RevoluteJoint*) that->m_world.CreateJoint(&wrap_revolute_jd->UseJointDef());
-
-		// create javascript revolute joint object
-		Local<Object> h_revolute_joint = NanNew<Object>(WrapRevoluteJoint::NewInstance());
-		WrapRevoluteJoint* wrap_revolute_joint = node::ObjectWrap::Unwrap<WrapRevoluteJoint>(h_revolute_joint);
-
-		// set up javascript revolute joint object
-		wrap_revolute_joint->SetupObject(wrap_revolute_jd, revolute_joint);
-
-		NanReturnValue(h_revolute_joint);
-		break;
-	}
-	case e_prismaticJoint:
-	{
-		WrapPrismaticJointDef* wrap_prismatic_jd = node::ObjectWrap::Unwrap<WrapPrismaticJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d prismatic joint
-		b2PrismaticJoint* prismatic_joint = (b2PrismaticJoint*) that->m_world.CreateJoint(&wrap_prismatic_jd->UseJointDef());
-
-		// create javascript prismatic joint object
-		Local<Object> h_prismatic_joint = NanNew<Object>(WrapPrismaticJoint::NewInstance());
-		WrapPrismaticJoint* wrap_prismatic_joint = node::ObjectWrap::Unwrap<WrapPrismaticJoint>(h_prismatic_joint);
-
-		// set up javascript prismatic joint object
-		wrap_prismatic_joint->SetupObject(wrap_prismatic_jd, prismatic_joint);
-
-		NanReturnValue(h_prismatic_joint);
-		break;
-	}
-	case e_distanceJoint:
-	{
-		WrapDistanceJointDef* wrap_distance_jd = node::ObjectWrap::Unwrap<WrapDistanceJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d distance joint
-		b2DistanceJoint* distance_joint = (b2DistanceJoint*) that->m_world.CreateJoint(&wrap_distance_jd->UseJointDef());
-
-		// create javascript distance joint object
-		Local<Object> h_distance_joint = NanNew<Object>(WrapDistanceJoint::NewInstance());
-		WrapDistanceJoint* wrap_distance_joint = node::ObjectWrap::Unwrap<WrapDistanceJoint>(h_distance_joint);
-
-		// set up javascript distance joint object
-		wrap_distance_joint->SetupObject(wrap_distance_jd, distance_joint);
-
-		NanReturnValue(h_distance_joint);
-		break;
-	}
-	case e_pulleyJoint:
-	{
-		WrapPulleyJointDef* wrap_pulley_jd = node::ObjectWrap::Unwrap<WrapPulleyJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d pulley joint
-		b2PulleyJoint* pulley_joint = (b2PulleyJoint*) that->m_world.CreateJoint(&wrap_pulley_jd->UseJointDef());
-
-		// create javascript pulley joint object
-		Local<Object> h_pulley_joint = NanNew<Object>(WrapPulleyJoint::NewInstance());
-		WrapPulleyJoint* wrap_pulley_joint = node::ObjectWrap::Unwrap<WrapPulleyJoint>(h_pulley_joint);
-
-		// set up javascript pulley joint object
-		wrap_pulley_joint->SetupObject(wrap_pulley_jd, pulley_joint);
-
-		NanReturnValue(h_pulley_joint);
-		break;
-	}
-	case e_mouseJoint:
-	{
-		WrapMouseJointDef* wrap_mouse_jd = node::ObjectWrap::Unwrap<WrapMouseJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d mouse joint
-		b2MouseJoint* mouse_joint = (b2MouseJoint*) that->m_world.CreateJoint(&wrap_mouse_jd->UseJointDef());
-
-		// create javascript mouse joint object
-		Local<Object> h_mouse_joint = NanNew<Object>(WrapMouseJoint::NewInstance());
-		WrapMouseJoint* wrap_mouse_joint = node::ObjectWrap::Unwrap<WrapMouseJoint>(h_mouse_joint);
-
-		// set up javascript mouse joint object
-		wrap_mouse_joint->SetupObject(wrap_mouse_jd, mouse_joint);
-
-		NanReturnValue(h_mouse_joint);
-		break;
-	}
-	case e_gearJoint:
-	{
-		WrapGearJointDef* wrap_gear_jd = node::ObjectWrap::Unwrap<WrapGearJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d gear joint
-		b2GearJoint* gear_joint = (b2GearJoint*) that->m_world.CreateJoint(&wrap_gear_jd->UseJointDef());
-
-		// create javascript gear joint object
-		Local<Object> h_gear_joint = NanNew<Object>(WrapGearJoint::NewInstance());
-		WrapGearJoint* wrap_gear_joint = node::ObjectWrap::Unwrap<WrapGearJoint>(h_gear_joint);
-
-		// set up javascript gear joint object
-		wrap_gear_joint->SetupObject(wrap_gear_jd, gear_joint);
-
-		NanReturnValue(h_gear_joint);
-		break;
-	}
-	case e_wheelJoint:
-	{
-		WrapWheelJointDef* wrap_wheel_jd = node::ObjectWrap::Unwrap<WrapWheelJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d wheel joint
-		b2WheelJoint* wheel_joint = (b2WheelJoint*) that->m_world.CreateJoint(&wrap_wheel_jd->UseJointDef());
-
-		// create javascript wheel joint object
-		Local<Object> h_wheel_joint = NanNew<Object>(WrapWheelJoint::NewInstance());
-		WrapWheelJoint* wrap_wheel_joint = node::ObjectWrap::Unwrap<WrapWheelJoint>(h_wheel_joint);
-
-		// set up javascript wheel joint object
-		wrap_wheel_joint->SetupObject(wrap_wheel_jd, wheel_joint);
-
-		NanReturnValue(h_wheel_joint);
-		break;
-	}
-    case e_weldJoint:
-	{
-		WrapWeldJointDef* wrap_weld_jd = node::ObjectWrap::Unwrap<WrapWeldJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d weld joint
-		b2WeldJoint* weld_joint = (b2WeldJoint*) that->m_world.CreateJoint(&wrap_weld_jd->UseJointDef());
-
-		// create javascript weld joint object
-		Local<Object> h_weld_joint = NanNew<Object>(WrapWeldJoint::NewInstance());
-		WrapWeldJoint* wrap_weld_joint = node::ObjectWrap::Unwrap<WrapWeldJoint>(h_weld_joint);
-
-		// set up javascript weld joint object
-		wrap_weld_joint->SetupObject(wrap_weld_jd, weld_joint);
-
-		NanReturnValue(h_weld_joint);
-		break;
-	}
-	case e_frictionJoint:
-	{
-		WrapFrictionJointDef* wrap_friction_jd = node::ObjectWrap::Unwrap<WrapFrictionJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d friction joint
-		b2FrictionJoint* friction_joint = (b2FrictionJoint*) that->m_world.CreateJoint(&wrap_friction_jd->UseJointDef());
-
-		// create javascript friction joint object
-		Local<Object> h_friction_joint = NanNew<Object>(WrapFrictionJoint::NewInstance());
-		WrapFrictionJoint* wrap_friction_joint = node::ObjectWrap::Unwrap<WrapFrictionJoint>(h_friction_joint);
-
-		// set up javascript friction joint object
-		wrap_friction_joint->SetupObject(wrap_friction_jd, friction_joint);
-
-		NanReturnValue(h_friction_joint);
-		break;
-	}
-	case e_ropeJoint:
-	{
-		WrapRopeJointDef* wrap_rope_jd = node::ObjectWrap::Unwrap<WrapRopeJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d rope joint
-		b2RopeJoint* rope_joint = (b2RopeJoint*) that->m_world.CreateJoint(&wrap_rope_jd->UseJointDef());
-
-		// create javascript rope joint object
-		Local<Object> h_rope_joint = NanNew<Object>(WrapRopeJoint::NewInstance());
-		WrapRopeJoint* wrap_rope_joint = node::ObjectWrap::Unwrap<WrapRopeJoint>(h_rope_joint);
-
-		// set up javascript rope joint object
-		wrap_rope_joint->SetupObject(wrap_rope_jd, rope_joint);
-
-		NanReturnValue(h_rope_joint);
-		break;
-	}
-	case e_motorJoint:
-	{
-		WrapMotorJointDef* wrap_motor_jd = node::ObjectWrap::Unwrap<WrapMotorJointDef>(Local<Object>::Cast(args[0]));
-
-		// create box2d motor joint
-		b2MotorJoint* motor_joint = (b2MotorJoint*) that->m_world.CreateJoint(&wrap_motor_jd->UseJointDef());
-
-		// create javascript motor joint object
-		Local<Object> h_motor_joint = NanNew<Object>(WrapMotorJoint::NewInstance());
-		WrapMotorJoint* wrap_motor_joint = node::ObjectWrap::Unwrap<WrapMotorJoint>(h_motor_joint);
-
-		// set up javascript motor joint object
-		wrap_motor_joint->SetupObject(wrap_motor_jd, motor_joint);
-
-		NanReturnValue(h_motor_joint);
-		break;
-	}
-	default:
-		break;
-	}
-
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, DestroyJoint,
-{
-	Local<Object> h_joint = Local<Object>::Cast(args[0]);
-	WrapJoint* wrap_joint = node::ObjectWrap::Unwrap<WrapJoint>(h_joint);
-
-	switch (wrap_joint->GetJoint()->GetType())
-	{
-	case e_unknownJoint:
-		break;
-	case e_revoluteJoint:
-	{
-		Local<Object> h_revolute_joint = Local<Object>::Cast(args[0]);
-		WrapRevoluteJoint* wrap_revolute_joint = node::ObjectWrap::Unwrap<WrapRevoluteJoint>(h_revolute_joint);
-
-		// delete box2d revolute joint
-		that->m_world.DestroyJoint(wrap_revolute_joint->GetJoint());
-
-		// reset javascript revolute joint object
-		wrap_revolute_joint->ResetObject();
-
-		break;
-	}
-	case e_prismaticJoint:
-	{
-		Local<Object> h_prismatic_joint = Local<Object>::Cast(args[0]);
-		WrapPrismaticJoint* wrap_prismatic_joint = node::ObjectWrap::Unwrap<WrapPrismaticJoint>(h_prismatic_joint);
-
-		// delete box2d prismatic joint
-		that->m_world.DestroyJoint(wrap_prismatic_joint->GetJoint());
-
-		// reset javascript prismatic joint object
-		wrap_prismatic_joint->ResetObject();
-		break;
-	}
-	case e_distanceJoint:
-	{
-		Local<Object> h_distance_joint = Local<Object>::Cast(args[0]);
-		WrapDistanceJoint* wrap_distance_joint = node::ObjectWrap::Unwrap<WrapDistanceJoint>(h_distance_joint);
-
-		// delete box2d distance joint
-		that->m_world.DestroyJoint(wrap_distance_joint->GetJoint());
-
-		// reset javascript distance joint object
-		wrap_distance_joint->ResetObject();
-
-		break;
-	}
-	case e_pulleyJoint:
-	{
-		Local<Object> h_pulley_joint = Local<Object>::Cast(args[0]);
-		WrapPulleyJoint* wrap_pulley_joint = node::ObjectWrap::Unwrap<WrapPulleyJoint>(h_pulley_joint);
-
-		// delete box2d pulley joint
-		that->m_world.DestroyJoint(wrap_pulley_joint->GetJoint());
-
-		// reset javascript pulley joint object
-		wrap_pulley_joint->ResetObject();
-
-		break;
-	}
-	case e_mouseJoint:
-	{
-		Local<Object> h_mouse_joint = Local<Object>::Cast(args[0]);
-		WrapMouseJoint* wrap_mouse_joint = node::ObjectWrap::Unwrap<WrapMouseJoint>(h_mouse_joint);
-
-		// delete box2d mouse joint
-		that->m_world.DestroyJoint(wrap_mouse_joint->GetJoint());
-
-		// reset javascript mouse joint object
-		wrap_mouse_joint->ResetObject();
-		break;
-	}
-	case e_gearJoint:
-	{
-		Local<Object> h_gear_joint = Local<Object>::Cast(args[0]);
-		WrapGearJoint* wrap_gear_joint = node::ObjectWrap::Unwrap<WrapGearJoint>(h_gear_joint);
-
-		// delete box2d gear joint
-		that->m_world.DestroyJoint(wrap_gear_joint->GetJoint());
-
-		// reset javascript gear joint object
-		wrap_gear_joint->ResetObject();
-
-		break;
-	}
-	case e_wheelJoint:
-	{
-		Local<Object> h_wheel_joint = Local<Object>::Cast(args[0]);
-		WrapWheelJoint* wrap_wheel_joint = node::ObjectWrap::Unwrap<WrapWheelJoint>(h_wheel_joint);
-
-		// delete box2d wheel joint
-		that->m_world.DestroyJoint(wrap_wheel_joint->GetJoint());
-
-		// reset javascript wheel joint object
-		wrap_wheel_joint->ResetObject();
-
-		break;
-	}
-    case e_weldJoint:
-	{
-		Local<Object> h_weld_joint = Local<Object>::Cast(args[0]);
-		WrapWeldJoint* wrap_weld_joint = node::ObjectWrap::Unwrap<WrapWeldJoint>(h_weld_joint);
-
-		// delete box2d weld joint
-		that->m_world.DestroyJoint(wrap_weld_joint->GetJoint());
-
-		// reset javascript weld joint object
-		wrap_weld_joint->ResetObject();
-		break;
-	}
-	case e_frictionJoint:
-	{
-		Local<Object> h_friction_joint = Local<Object>::Cast(args[0]);
-		WrapFrictionJoint* wrap_friction_joint = node::ObjectWrap::Unwrap<WrapFrictionJoint>(h_friction_joint);
-
-		// delete box2d friction joint
-		that->m_world.DestroyJoint(wrap_friction_joint->GetJoint());
-
-		// reset javascript friction joint object
-		wrap_friction_joint->ResetObject();
-
-		break;
-	}
-	case e_ropeJoint:
-	{
-		Local<Object> h_rope_joint = Local<Object>::Cast(args[0]);
-		WrapRopeJoint* wrap_rope_joint = node::ObjectWrap::Unwrap<WrapRopeJoint>(h_rope_joint);
-
-		// delete box2d rope joint
-		that->m_world.DestroyJoint(wrap_rope_joint->GetJoint());
-
-		// reset javascript rope joint object
-		wrap_rope_joint->ResetObject();
-
-		break;
-	}
-	case e_motorJoint:
-	{
-		Local<Object> h_motor_joint = Local<Object>::Cast(args[0]);
-		WrapMotorJoint* wrap_motor_joint = node::ObjectWrap::Unwrap<WrapMotorJoint>(h_motor_joint);
-
-		// delete box2d motor joint
-		that->m_world.DestroyJoint(wrap_motor_joint->GetJoint());
-
-		// reset javascript motor joint object
-		wrap_motor_joint->ResetObject();
-
-		break;
-	}
-	default:
-		break;
-	}
-
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, Step,
-{
-	float32 timeStep = (float32) args[0]->NumberValue();
-	int32 velocityIterations = (int32) args[1]->Int32Value();
-	int32 positionIterations = (int32) args[2]->Int32Value();
-	that->m_world.Step(timeStep, velocityIterations, positionIterations);
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, ClearForces,
-{
-	that->m_world.ClearForces();
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, DrawDebugData,
-{
-	if (!that->m_draw.IsEmpty())
-	{
-//		Local<Object> h_draw = NanNew<Object>(that->m_draw);
-//		WrapDraw* wrap_draw = node::ObjectWrap::Unwrap<WrapDraw>(h_draw);
-//		that->m_world.SetDebugDraw(&wrap_draw->m_wrap_draw);
-//		that->m_world.DrawDebugData();
-//		that->m_world.SetDebugDraw(NULL);
-
-		Local<Object> h_draw = NanNew<Object>(that->m_draw);
-		Local<Function> h_method = Local<Function>::Cast(h_draw->Get(NanNew<String>("GetFlags")));
-		uint32 flags = NanMakeCallback(h_draw, h_method, 0, NULL)->Uint32Value();
-		that->m_wrap_draw.SetFlags(flags);
-		that->m_world.DrawDebugData();
-	}
-
-	NanReturnUndefined();
-})
-
-class WrapQueryCallback : public b2QueryCallback
-{
-private:
-	Handle<Function> m_callback;
-
-public:
-	WrapQueryCallback(Handle<Function> callback) : m_callback(callback) {}
-
-	bool ReportFixture(b2Fixture* fixture)
-	{
-		NanScope();
-		// get fixture internal data
-		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-		Local<Object> h_fixture = NanObjectWrapHandle(wrap_fixture);
-		Handle<Value> argv[] = { h_fixture };
-		return NanMakeCallback(NanGetCurrentContext()->Global(), NanNew<Function>(m_callback), countof(argv), argv)->BooleanValue();
-	}
-};
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, QueryAABB,
-{
-	Local<Function> callback = Local<Function>::Cast(args[0]);
-	WrapAABB* wrap_aabb = node::ObjectWrap::Unwrap<WrapAABB>(Local<Object>::Cast(args[1]));
-	WrapQueryCallback wrap_callback(callback);
-	that->m_world.QueryAABB(&wrap_callback, wrap_aabb->GetAABB());
-	NanReturnUndefined();
-})
-
-class WrapRayCastCallback : public b2RayCastCallback
-{
-private:
-	Handle<Function> m_callback;
-
-public:
-	WrapRayCastCallback(Handle<Function> callback) : m_callback(callback) {}
-
-	float32 ReportFixture(b2Fixture* fixture, const b2Vec2& point, const b2Vec2& normal, float32 fraction)
-	{
-		NanScope();
-		// get fixture internal data
-		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
-		Local<Object> h_fixture = NanObjectWrapHandle(wrap_fixture);
-		Local<Object> h_point = NanNew<Object>(WrapVec2::NewInstance(point));
-		Local<Object> h_normal = NanNew<Object>(WrapVec2::NewInstance(normal));
-		Local<Number> h_fraction = NanNew<Number>(fraction);
-		Handle<Value> argv[] = { h_fixture, h_point, h_normal, h_fraction };
-		return (float32) NanMakeCallback(NanGetCurrentContext()->Global(), NanNew<Function>(m_callback), countof(argv), argv)->NumberValue();
-	}
-};
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, RayCast,
-{
-	Local<Function> callback = Local<Function>::Cast(args[0]);
-	WrapVec2* point1 = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	WrapVec2* point2 = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
-	WrapRayCastCallback wrap_callback(callback);
-	that->m_world.RayCast(&wrap_callback, point1->GetVec2(), point2->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetBodyList,
-{
-	b2Body* body = that->m_world.GetBodyList();
-	if (body)
-	{
-		// get body internal data
-		WrapBody* wrap_body = WrapBody::GetWrap(body);
-		NanReturnValue(NanObjectWrapHandle(wrap_body));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetJointList,
-{
-	b2Joint* joint = that->m_world.GetJointList();
-	if (joint)
-	{
-		// get joint internal data
-		WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
-		NanReturnValue(NanObjectWrapHandle(wrap_joint));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetContactList,
-{
-	b2Contact* contact = that->m_world.GetContactList();
-	if (contact)
-	{
-		NanReturnValue(WrapContact::NewInstance(contact));
-	}
-	NanReturnNull();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetAllowSleeping,
-{
-	that->m_world.SetAllowSleeping(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetAllowSleeping,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.GetAllowSleeping()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetWarmStarting,
-{
-	that->m_world.SetWarmStarting(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetWarmStarting,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.GetWarmStarting()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetContinuousPhysics,
-{
-	that->m_world.SetContinuousPhysics(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetContinuousPhysics,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.GetContinuousPhysics()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetSubStepping,
-{
-	that->m_world.SetSubStepping(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetSubStepping,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.GetSubStepping()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetBodyCount,
-{
-	NanReturnValue(NanNew<Integer>(that->m_world.GetBodyCount()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetJointCount,
-{
-	NanReturnValue(NanNew<Integer>(that->m_world.GetJointCount()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetContactCount,
-{
-	NanReturnValue(NanNew<Integer>(that->m_world.GetContactCount()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetGravity,
-{
-	WrapVec2* wrap_gravity = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	that->m_world.SetGravity(wrap_gravity->GetVec2());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetGravity,
-{
-	NanReturnValue(WrapVec2::NewInstance(that->m_world.GetGravity()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, IsLocked,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.IsLocked()));
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, SetAutoClearForces,
-{
-	that->m_world.SetAutoClearForces(args[0]->BooleanValue());
-	NanReturnUndefined();
-})
-
-CLASS_METHOD_IMPLEMENT(WrapWorld, GetAutoClearForces,
-{
-	NanReturnValue(NanNew<Boolean>(that->m_world.GetAutoClearForces()));
-})
 
 ////
 
-MODULE_EXPORT_IMPLEMENT(b2Distance)
+NANX_EXPORT(b2Distance)
 {
-	NanScope();
-	WrapVec2* a = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* b = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	NanReturnValue(NanNew<Number>(b2Distance(a->GetVec2(), b->GetVec2())));
+	WrapVec2* a = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* b = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	info.GetReturnValue().Set(Nan::New(b2Distance(a->GetVec2(), b->GetVec2())));
 }
 
-MODULE_EXPORT_IMPLEMENT(b2DistanceSquared)
+NANX_EXPORT(b2DistanceSquared)
 {
-	NanScope();
-	WrapVec2* a = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* b = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	NanReturnValue(NanNew<Number>(b2DistanceSquared(a->GetVec2(), b->GetVec2())));
+	WrapVec2* a = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* b = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	info.GetReturnValue().Set(Nan::New(b2DistanceSquared(a->GetVec2(), b->GetVec2())));
 }
 
-MODULE_EXPORT_IMPLEMENT(b2Dot_V2_V2)
+NANX_EXPORT(b2Dot_V2_V2)
 {
-	NanScope();
-	WrapVec2* a = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* b = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	NanReturnValue(NanNew<Number>(b2Dot(a->GetVec2(), b->GetVec2())));
+	WrapVec2* a = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* b = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	info.GetReturnValue().Set(Nan::New(b2Dot(a->GetVec2(), b->GetVec2())));
 }
 
-MODULE_EXPORT_IMPLEMENT(b2Add_V2_V2)
+NANX_EXPORT(b2Add_V2_V2)
 {
-	NanScope();
-	WrapVec2* a = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* b = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	WrapVec2* out = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
+	WrapVec2* a = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* b = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapVec2* out = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetVec2(a->GetVec2() + b->GetVec2());
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2Sub_V2_V2)
+NANX_EXPORT(b2Sub_V2_V2)
 {
-	NanScope();
-	WrapVec2* a = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[0]));
-	WrapVec2* b = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	WrapVec2* out = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
+	WrapVec2* a = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* b = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapVec2* out = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetVec2(a->GetVec2() - b->GetVec2());
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2Mul_X_V2)
+NANX_EXPORT(b2Mul_X_V2)
 {
-	NanScope();
-	WrapTransform* T = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[0]));
-	WrapVec2* v = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	WrapVec2* out = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
+	WrapTransform* T = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* v = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapVec2* out = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetVec2(b2Mul(T->GetTransform(), v->GetVec2()));
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2MulT_X_V2)
+NANX_EXPORT(b2MulT_X_V2)
 {
-	NanScope();
-	WrapTransform* T = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[0]));
-	WrapVec2* v = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[1]));
-	WrapVec2* out = node::ObjectWrap::Unwrap<WrapVec2>(Local<Object>::Cast(args[2]));
+	WrapTransform* T = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapVec2* v = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapVec2* out = WrapVec2::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetVec2(b2MulT(T->GetTransform(), v->GetVec2()));
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2Mul_X_X)
+NANX_EXPORT(b2Mul_X_X)
 {
-	NanScope();
-	WrapTransform* A = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[0]));
-	WrapTransform* B = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[1]));
-	WrapTransform* out = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[2]));
+	WrapTransform* A = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapTransform* B = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapTransform* out = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetTransform(b2Mul(A->GetTransform(), B->GetTransform()));
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2MulT_X_X)
+NANX_EXPORT(b2MulT_X_X)
 {
-	NanScope();
-	WrapTransform* A = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[0]));
-	WrapTransform* B = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[1]));
-	WrapTransform* out = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[2]));
+	WrapTransform* A = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+	WrapTransform* B = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[1]));
+	WrapTransform* out = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
 	out->SetTransform(b2MulT(A->GetTransform(), B->GetTransform()));
-	NanReturnValue(args[2]);
+	info.GetReturnValue().Set(info[2]);
 }
 
-MODULE_EXPORT_IMPLEMENT(b2GetPointStates)
+NANX_EXPORT(b2GetPointStates)
 {
-	NanScope();
-	Local<Array> wrap_state1 = Local<Array>::Cast(args[0]);
-	Local<Array> wrap_state2 = Local<Array>::Cast(args[1]);
-	WrapManifold* wrap_manifold1 = node::ObjectWrap::Unwrap<WrapManifold>(Local<Object>::Cast(args[2]));
-	WrapManifold* wrap_manifold2 = node::ObjectWrap::Unwrap<WrapManifold>(Local<Object>::Cast(args[3]));
+	v8::Local<v8::Array> wrap_state1 = v8::Local<v8::Array>::Cast(info[0]);
+	v8::Local<v8::Array> wrap_state2 = v8::Local<v8::Array>::Cast(info[1]);
+	WrapManifold* wrap_manifold1 = WrapManifold::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+	WrapManifold* wrap_manifold2 = WrapManifold::Unwrap(v8::Local<v8::Object>::Cast(info[3]));
 	b2PointState state1[b2_maxManifoldPoints];
 	b2PointState state2[b2_maxManifoldPoints];
 	b2GetPointStates(state1, state2, &wrap_manifold1->m_manifold, &wrap_manifold2->m_manifold);
 	for (int i = 0; i < b2_maxManifoldPoints; ++i)
 	{
-		wrap_state1->Set(i, NanNew<Integer>(state1[i]));
-		wrap_state2->Set(i, NanNew<Integer>(state2[i]));
+		wrap_state1->Set(i, Nan::New(state1[i]));
+		wrap_state2->Set(i, Nan::New(state2[i]));
 	}
-	NanReturnUndefined();
 }
 
-MODULE_EXPORT_IMPLEMENT(b2TestOverlap_AABB)
+NANX_EXPORT(b2TestOverlap_AABB)
 {
-	NanReturnValue(NanNew<Boolean>(false));
+	info.GetReturnValue().Set(Nan::New(false));
 }
 
-MODULE_EXPORT_IMPLEMENT(b2TestOverlap_Shape)
+NANX_EXPORT(b2TestOverlap_Shape)
 {
-	WrapShape* wrap_shapeA = node::ObjectWrap::Unwrap<WrapShape>(Local<Object>::Cast(args[0]));
-    int32 indexA = (int32) args[1]->Int32Value();
-	WrapShape* wrap_shapeB = node::ObjectWrap::Unwrap<WrapShape>(Local<Object>::Cast(args[2]));
-    int32 indexB = (int32) args[3]->Int32Value();
-    WrapTransform* wrap_transformA = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[4]));
-    WrapTransform* wrap_transformB = node::ObjectWrap::Unwrap<WrapTransform>(Local<Object>::Cast(args[5]));
+	WrapShape* wrap_shapeA = WrapShape::Unwrap(v8::Local<v8::Object>::Cast(info[0]));
+    int32 indexA = NANX_int32(info[1]);
+	WrapShape* wrap_shapeB = WrapShape::Unwrap(v8::Local<v8::Object>::Cast(info[2]));
+    int32 indexB = NANX_int32(info[3]);
+    WrapTransform* wrap_transformA = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[4]));
+    WrapTransform* wrap_transformB = WrapTransform::Unwrap(v8::Local<v8::Object>::Cast(info[5]));
     const bool overlap = b2TestOverlap(&wrap_shapeA->GetShape(), indexA, &wrap_shapeB->GetShape(), indexB, wrap_transformA->GetTransform(), wrap_transformB->GetTransform());
-	NanReturnValue(NanNew<Boolean>(overlap));
+	info.GetReturnValue().Set(Nan::New(overlap));
 }
+
+#if B2_ENABLE_PARTICLE
+
+NANX_EXPORT(b2CalculateParticleIterations)
+{
+	float32 gravity = NANX_float32(info[0]);
+	float32 radius = NANX_float32(info[1]);
+	float32 timeStep = NANX_float32(info[2]);
+	info.GetReturnValue().Set(Nan::New(::b2CalculateParticleIterations(gravity, radius, timeStep)));
+}
+
+#endif
 
 ////
 
-#if NODE_VERSION_AT_LEAST(0,11,0)
-void init(Handle<Object> exports, Handle<Value> module, Handle<Context> context)
-#else
-void init(Handle<Object> exports/*, Handle<Value> module*/)
-#endif
+NAN_MODULE_INIT(init)
 {
-	NanScope();
 
-	MODULE_CONSTANT(exports, b2_maxFloat);
-	MODULE_CONSTANT(exports, b2_epsilon);
-	MODULE_CONSTANT(exports, b2_pi);
-	MODULE_CONSTANT(exports, b2_maxManifoldPoints);
-	MODULE_CONSTANT(exports, b2_maxPolygonVertices);
-	MODULE_CONSTANT(exports, b2_aabbExtension);
-	MODULE_CONSTANT(exports, b2_aabbMultiplier);
-	MODULE_CONSTANT(exports, b2_linearSlop);
-	MODULE_CONSTANT(exports, b2_angularSlop);
-	MODULE_CONSTANT(exports, b2_polygonRadius);
-	MODULE_CONSTANT(exports, b2_maxSubSteps);
-	MODULE_CONSTANT(exports, b2_maxTOIContacts);
-	MODULE_CONSTANT(exports, b2_velocityThreshold);
-	MODULE_CONSTANT(exports, b2_maxLinearCorrection);
-	MODULE_CONSTANT(exports, b2_maxAngularCorrection);
-	MODULE_CONSTANT(exports, b2_maxTranslation);
-	MODULE_CONSTANT(exports, b2_maxTranslationSquared);
-	MODULE_CONSTANT(exports, b2_maxRotation);
-	MODULE_CONSTANT(exports, b2_maxRotationSquared);
-	MODULE_CONSTANT(exports, b2_baumgarte);
-	MODULE_CONSTANT(exports, b2_toiBaugarte);
-	MODULE_CONSTANT(exports, b2_timeToSleep);
-	MODULE_CONSTANT(exports, b2_linearSleepTolerance);
-	MODULE_CONSTANT(exports, b2_angularSleepTolerance);
+	NANX_CONSTANT(target, b2_maxFloat);
+	NANX_CONSTANT(target, b2_epsilon);
+	NANX_CONSTANT(target, b2_pi);
+	NANX_CONSTANT(target, b2_maxManifoldPoints);
+	NANX_CONSTANT(target, b2_maxPolygonVertices);
+	NANX_CONSTANT(target, b2_aabbExtension);
+	NANX_CONSTANT(target, b2_aabbMultiplier);
+	NANX_CONSTANT(target, b2_linearSlop);
+	NANX_CONSTANT(target, b2_angularSlop);
+	NANX_CONSTANT(target, b2_polygonRadius);
+	NANX_CONSTANT(target, b2_maxSubSteps);
+	NANX_CONSTANT(target, b2_maxTOIContacts);
+	NANX_CONSTANT(target, b2_velocityThreshold);
+	NANX_CONSTANT(target, b2_maxLinearCorrection);
+	NANX_CONSTANT(target, b2_maxAngularCorrection);
+	NANX_CONSTANT(target, b2_maxTranslation);
+	NANX_CONSTANT(target, b2_maxTranslationSquared);
+	NANX_CONSTANT(target, b2_maxRotation);
+	NANX_CONSTANT(target, b2_maxRotationSquared);
+	NANX_CONSTANT(target, b2_baumgarte);
+	NANX_CONSTANT(target, b2_toiBaugarte);
+	NANX_CONSTANT(target, b2_timeToSleep);
+	NANX_CONSTANT(target, b2_linearSleepTolerance);
+	NANX_CONSTANT(target, b2_angularSleepTolerance);
 
-	Local<Object> version = NanNew<Object>();
-	exports->Set(NanNew<String>("b2_version"), version);
-	version->Set(NanNew<String>("major"), NanNew<Integer>(b2_version.major));
-	version->Set(NanNew<String>("minor"), NanNew<Integer>(b2_version.minor));
-	version->Set(NanNew<String>("revision"), NanNew<Integer>(b2_version.revision));
+	v8::Local<v8::Object> version = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2_version"), version);
+	version->Set(NANX_SYMBOL("major"), Nan::New(b2_version.major));
+	version->Set(NANX_SYMBOL("minor"), Nan::New(b2_version.minor));
+	version->Set(NANX_SYMBOL("revision"), Nan::New(b2_version.revision));
 
-	Local<Object> WrapShapeType = NanNew<Object>();
-	exports->Set(NanNew<String>("b2ShapeType"), WrapShapeType);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_unknownShape,	-1);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_circleShape,		b2Shape::e_circle);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_edgeShape,		b2Shape::e_edge);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_polygonShape,		b2Shape::e_polygon);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_chainShape,		b2Shape::e_chain);
-	MODULE_CONSTANT_VALUE(WrapShapeType, e_shapeTypeCount,	b2Shape::e_typeCount);
+	v8::Local<v8::Object> WrapShapeType = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2ShapeType"), WrapShapeType);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_unknownShape,		-1);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_circleShape,		b2Shape::e_circle);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_edgeShape,		b2Shape::e_edge);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_polygonShape,		b2Shape::e_polygon);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_chainShape,		b2Shape::e_chain);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_shapeTypeCount,	b2Shape::e_typeCount);
 
-	Local<Object> WrapBodyType = NanNew<Object>();
-	exports->Set(NanNew<String>("b2BodyType"), WrapBodyType);
-	MODULE_CONSTANT(WrapBodyType, b2_staticBody);
-	MODULE_CONSTANT(WrapBodyType, b2_kinematicBody);
-	MODULE_CONSTANT(WrapBodyType, b2_dynamicBody);
+	v8::Local<v8::Object> WrapBodyType = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2BodyType"), WrapBodyType);
+	NANX_CONSTANT(WrapBodyType, b2_staticBody);
+	NANX_CONSTANT(WrapBodyType, b2_kinematicBody);
+	NANX_CONSTANT(WrapBodyType, b2_dynamicBody);
 
-	Local<Object> WrapJointType = NanNew<Object>();
-	exports->Set(NanNew<String>("b2JointType"), WrapJointType);
-	MODULE_CONSTANT(WrapJointType, e_unknownJoint);
-	MODULE_CONSTANT(WrapJointType, e_revoluteJoint);
-	MODULE_CONSTANT(WrapJointType, e_prismaticJoint);
-	MODULE_CONSTANT(WrapJointType, e_distanceJoint);
-	MODULE_CONSTANT(WrapJointType, e_pulleyJoint);
-	MODULE_CONSTANT(WrapJointType, e_mouseJoint);
-	MODULE_CONSTANT(WrapJointType, e_gearJoint);
-	MODULE_CONSTANT(WrapJointType, e_wheelJoint);
-	MODULE_CONSTANT(WrapJointType, e_weldJoint);
-	MODULE_CONSTANT(WrapJointType, e_frictionJoint);
-	MODULE_CONSTANT(WrapJointType, e_ropeJoint);
-	MODULE_CONSTANT(WrapJointType, e_motorJoint);
+	v8::Local<v8::Object> WrapJointType = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2JointType"), WrapJointType);
+	NANX_CONSTANT(WrapJointType, e_unknownJoint);
+	NANX_CONSTANT(WrapJointType, e_revoluteJoint);
+	NANX_CONSTANT(WrapJointType, e_prismaticJoint);
+	NANX_CONSTANT(WrapJointType, e_distanceJoint);
+	NANX_CONSTANT(WrapJointType, e_pulleyJoint);
+	NANX_CONSTANT(WrapJointType, e_mouseJoint);
+	NANX_CONSTANT(WrapJointType, e_gearJoint);
+	NANX_CONSTANT(WrapJointType, e_wheelJoint);
+	NANX_CONSTANT(WrapJointType, e_weldJoint);
+	NANX_CONSTANT(WrapJointType, e_frictionJoint);
+	NANX_CONSTANT(WrapJointType, e_ropeJoint);
+	NANX_CONSTANT(WrapJointType, e_motorJoint);
 
-	Local<Object> WrapLimitState = NanNew<Object>();
-	exports->Set(NanNew<String>("b2LimitState"), WrapLimitState);
-	MODULE_CONSTANT(WrapLimitState, e_inactiveLimit);
-	MODULE_CONSTANT(WrapLimitState, e_atLowerLimit);
-	MODULE_CONSTANT(WrapLimitState, e_atUpperLimit);
-	MODULE_CONSTANT(WrapLimitState, e_equalLimits);
+	v8::Local<v8::Object> WrapLimitState = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2LimitState"), WrapLimitState);
+	NANX_CONSTANT(WrapLimitState, e_inactiveLimit);
+	NANX_CONSTANT(WrapLimitState, e_atLowerLimit);
+	NANX_CONSTANT(WrapLimitState, e_atUpperLimit);
+	NANX_CONSTANT(WrapLimitState, e_equalLimits);
 
-	Local<Object> WrapManifoldType = NanNew<Object>();
-	exports->Set(NanNew<String>("b2ManifoldType"), WrapManifoldType);
-	MODULE_CONSTANT_VALUE(WrapManifoldType, e_circles,	b2Manifold::e_circles);
-	MODULE_CONSTANT_VALUE(WrapManifoldType, e_faceA,	b2Manifold::e_faceA);
-	MODULE_CONSTANT_VALUE(WrapManifoldType, e_faceB,	b2Manifold::e_faceB);
+	v8::Local<v8::Object> WrapManifoldType = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2ManifoldType"), WrapManifoldType);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_circles,	b2Manifold::e_circles);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceA,	b2Manifold::e_faceA);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceB,	b2Manifold::e_faceB);
 
-	Local<Object> WrapPointState = NanNew<Object>();
-	exports->Set(NanNew<String>("b2PointState"), WrapPointState);
-	MODULE_CONSTANT(WrapPointState, b2_nullState);
-	MODULE_CONSTANT(WrapPointState, b2_addState);
-	MODULE_CONSTANT(WrapPointState, b2_persistState);
-	MODULE_CONSTANT(WrapPointState, b2_removeState);
+	v8::Local<v8::Object> WrapPointState = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2PointState"), WrapPointState);
+	NANX_CONSTANT(WrapPointState, b2_nullState);
+	NANX_CONSTANT(WrapPointState, b2_addState);
+	NANX_CONSTANT(WrapPointState, b2_persistState);
+	NANX_CONSTANT(WrapPointState, b2_removeState);
 
-	Local<Object> WrapDrawFlags = NanNew<Object>();
-	exports->Set(NanNew<String>("b2DrawFlags"), WrapDrawFlags);
-	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_shapeBit,		b2Draw::e_shapeBit);
-	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_jointBit,		b2Draw::e_jointBit);
-	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit,			b2Draw::e_aabbBit);
-	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_pairBit,			b2Draw::e_pairBit);
-	MODULE_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit,	b2Draw::e_centerOfMassBit);
-
-	WrapVec2::Init(exports);
-	WrapRot::Init(exports);
-	WrapTransform::Init(exports);
-	WrapAABB::Init(exports);
-	WrapMassData::Init(exports);
-	WrapShape::Init(exports);
-	WrapCircleShape::Init(exports);
-	WrapEdgeShape::Init(exports);
-	WrapPolygonShape::Init(exports);
-	WrapChainShape::Init(exports);
-	WrapFilter::Init(exports);
-	WrapFixtureDef::Init(exports);
-	WrapFixture::Init(exports);
-	WrapBodyDef::Init(exports);
-	WrapBody::Init(exports);
-	WrapJointDef::Init(exports);
-	WrapJoint::Init(exports);
-	WrapRevoluteJointDef::Init(exports);
-	WrapRevoluteJoint::Init(exports);
-	WrapPrismaticJointDef::Init(exports);
-	WrapPrismaticJoint::Init(exports);
-	WrapDistanceJointDef::Init(exports);
-	WrapDistanceJoint::Init(exports);
-	WrapPulleyJointDef::Init(exports);
-	WrapPulleyJoint::Init(exports);
-	WrapMouseJointDef::Init(exports);
-	WrapMouseJoint::Init(exports);
-	WrapGearJointDef::Init(exports);
-	WrapGearJoint::Init(exports);
-	WrapWheelJointDef::Init(exports);
-	WrapWheelJoint::Init(exports);
-	WrapWeldJointDef::Init(exports);
-	WrapWeldJoint::Init(exports);
-	WrapFrictionJointDef::Init(exports);
-	WrapFrictionJoint::Init(exports);
-	WrapRopeJointDef::Init(exports);
-	WrapRopeJoint::Init(exports);
-	WrapMotorJointDef::Init(exports);
-	WrapMotorJoint::Init(exports);
-	WrapContactID::Init(exports);
-	WrapManifoldPoint::Init(exports);
-	WrapManifold::Init(exports);
-	WrapWorldManifold::Init(exports);
-	WrapContact::Init(exports);
-	WrapContactImpulse::Init(exports);
-	WrapColor::Init(exports);
-	#if 0
-	WrapDraw::Init(exports);
+	v8::Local<v8::Object> WrapDrawFlags = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2DrawFlags"), WrapDrawFlags);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_shapeBit,		b2Draw::e_shapeBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_jointBit,		b2Draw::e_jointBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit,			b2Draw::e_aabbBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_pairBit,			b2Draw::e_pairBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit,	b2Draw::e_centerOfMassBit);
+	#if B2_ENABLE_PARTICLE
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_particleBit,		b2Draw::e_particleBit);
 	#endif
-	WrapWorld::Init(exports);
 
-	MODULE_EXPORT_APPLY(exports, b2Distance);
-	MODULE_EXPORT_APPLY(exports, b2DistanceSquared);
-	MODULE_EXPORT_APPLY(exports, b2Dot_V2_V2);
-	MODULE_EXPORT_APPLY(exports, b2Add_V2_V2);
-	MODULE_EXPORT_APPLY(exports, b2Sub_V2_V2);
-	MODULE_EXPORT_APPLY(exports, b2Mul_X_V2);
-	MODULE_EXPORT_APPLY(exports, b2MulT_X_V2);
-	MODULE_EXPORT_APPLY(exports, b2Mul_X_X);
-	MODULE_EXPORT_APPLY(exports, b2MulT_X_X);
+	#if B2_ENABLE_PARTICLE
 
-	MODULE_EXPORT_APPLY(exports, b2GetPointStates);
+	v8::Local<v8::Object> WrapParticleFlag = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2ParticleFlag"), WrapParticleFlag);
+	NANX_CONSTANT(WrapParticleFlag, b2_waterParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_zombieParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_wallParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_springParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_elasticParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_viscousParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_powderParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_tensileParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_colorMixingParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_destructionListenerParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_barrierParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_staticPressureParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_reactiveParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_repulsiveParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_fixtureContactListenerParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_particleContactListenerParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_fixtureContactFilterParticle);
+	NANX_CONSTANT(WrapParticleFlag, b2_particleContactFilterParticle);
 
-	MODULE_EXPORT_APPLY(exports, b2TestOverlap_AABB);
-	MODULE_EXPORT_APPLY(exports, b2TestOverlap_Shape);
+	v8::Local<v8::Object> WrapParticleGroupFlag = Nan::New<v8::Object>();
+	Nan::Set(target, NANX_SYMBOL("b2ParticleGroupFlag"), WrapParticleGroupFlag);
+	NANX_CONSTANT(WrapParticleGroupFlag, b2_solidParticleGroup);
+	NANX_CONSTANT(WrapParticleGroupFlag, b2_rigidParticleGroup);
+	NANX_CONSTANT(WrapParticleGroupFlag, b2_particleGroupCanBeEmpty);
+	NANX_CONSTANT(WrapParticleGroupFlag, b2_particleGroupWillBeDestroyed);
+	NANX_CONSTANT(WrapParticleGroupFlag, b2_particleGroupNeedsUpdateDepth);
+
+	#endif
+
+	WrapVec2::Init(target);
+	WrapRot::Init(target);
+	WrapTransform::Init(target);
+	WrapAABB::Init(target);
+	WrapMassData::Init(target);
+	//WrapShape::Init(target);
+	WrapCircleShape::Init(target);
+	WrapEdgeShape::Init(target);
+	WrapPolygonShape::Init(target);
+	WrapChainShape::Init(target);
+	WrapFilter::Init(target);
+	WrapFixtureDef::Init(target);
+	WrapFixture::Init(target);
+	WrapBodyDef::Init(target);
+	WrapBody::Init(target);
+	WrapJointDef::Init(target);
+	WrapJoint::Init(target);
+	WrapRevoluteJointDef::Init(target);
+	WrapRevoluteJoint::Init(target);
+	WrapPrismaticJointDef::Init(target);
+	WrapPrismaticJoint::Init(target);
+	WrapDistanceJointDef::Init(target);
+	WrapDistanceJoint::Init(target);
+	WrapPulleyJointDef::Init(target);
+	WrapPulleyJoint::Init(target);
+	WrapMouseJointDef::Init(target);
+	WrapMouseJoint::Init(target);
+	WrapGearJointDef::Init(target);
+	WrapGearJoint::Init(target);
+	WrapWheelJointDef::Init(target);
+	WrapWheelJoint::Init(target);
+	WrapWeldJointDef::Init(target);
+	WrapWeldJoint::Init(target);
+	WrapFrictionJointDef::Init(target);
+	WrapFrictionJoint::Init(target);
+	WrapRopeJointDef::Init(target);
+	WrapRopeJoint::Init(target);
+	WrapMotorJointDef::Init(target);
+	WrapMotorJoint::Init(target);
+	WrapContactID::Init(target);
+	WrapManifoldPoint::Init(target);
+	WrapManifold::Init(target);
+	WrapWorldManifold::Init(target);
+	WrapContact::Init(target);
+	WrapContactImpulse::Init(target);
+	WrapColor::Init(target);
+	#if 0
+	WrapDraw::Init(target);
+	#endif
+	#if B2_ENABLE_PARTICLE
+	WrapParticleColor::Init(target);
+	WrapParticleDef::Init(target);
+	WrapParticleHandle::Init(target);
+	WrapParticleGroupDef::Init(target);
+	WrapParticleGroup::Init(target);
+	WrapParticleSystemDef::Init(target);
+	WrapParticleSystem::Init(target);
+	#endif
+	WrapWorld::Init(target);
+
+	NANX_EXPORT_APPLY(target, b2Distance);
+	NANX_EXPORT_APPLY(target, b2DistanceSquared);
+	NANX_EXPORT_APPLY(target, b2Dot_V2_V2);
+	NANX_EXPORT_APPLY(target, b2Add_V2_V2);
+	NANX_EXPORT_APPLY(target, b2Sub_V2_V2);
+	NANX_EXPORT_APPLY(target, b2Mul_X_V2);
+	NANX_EXPORT_APPLY(target, b2MulT_X_V2);
+	NANX_EXPORT_APPLY(target, b2Mul_X_X);
+	NANX_EXPORT_APPLY(target, b2MulT_X_X);
+
+	NANX_EXPORT_APPLY(target, b2GetPointStates);
+
+	NANX_EXPORT_APPLY(target, b2TestOverlap_AABB);
+	NANX_EXPORT_APPLY(target, b2TestOverlap_Shape);
+
+	#if B2_ENABLE_PARTICLE
+	NANX_EXPORT_APPLY(target, b2CalculateParticleIterations);
+	#endif
 }
 
 ////
 
 } // namespace node_box2d
 
-#if NODE_VERSION_AT_LEAST(0,11,0)
-NODE_MODULE_CONTEXT_AWARE_BUILTIN(node_box2d, node_box2d::init);
-#else
 NODE_MODULE(node_box2d, node_box2d::init);
-#endif
-

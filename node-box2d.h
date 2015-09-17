@@ -27,19 +27,12 @@
 #ifndef _NODE_BOX2D_H_
 #define _NODE_BOX2D_H_
 
-//#include <v8.h>
-//#include <node.h>
 #include <nan.h>
 
 namespace node_box2d {
 
-#if NODE_VERSION_AT_LEAST(0,11,0)
-void init(v8::Handle<v8::Object> exports, v8::Handle<v8::Value> module, v8::Handle<v8::Context> context);
-#else
-void init(v8::Handle<v8::Object> exports/*, v8::Handle<v8::Value> module*/);
-#endif
+NAN_MODULE_INIT(init);
 
 } // namespace node_box2d
 
 #endif // _NODE_BOX2D_H_
-
