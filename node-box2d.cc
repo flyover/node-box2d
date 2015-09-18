@@ -59,8 +59,8 @@
 #define NANX_MEMBER_APPLY_SET(OBJECT_TEMPLATE, NAME) Nan::SetAccessor(OBJECT_TEMPLATE, NANX_SYMBOL(#NAME), NULL, _set_##NAME); // set only
 
 #define NANX_MEMBER_VALUE(NAME) NANX_MEMBER_VALUE_GET(NAME) NANX_MEMBER_VALUE_SET(NAME)
-#define NANX_MEMBER_VALUE_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Value>(Unwrap(info.This())->m_wrap_##NAME)); }
-#define NANX_MEMBER_VALUE_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Value>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
+#define NANX_MEMBER_VALUE_GET(NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Value>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_VALUE_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Value>()); info.GetReturnValue().Set(value); }
 
 #define NANX_MEMBER_BOOLEAN(TYPE, NAME) NANX_MEMBER_BOOLEAN_GET(TYPE, NAME) NANX_MEMBER_BOOLEAN_SET(TYPE, NAME)
 #define NANX_MEMBER_BOOLEAN_GET(TYPE, NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Boolean>(static_cast<bool>(Peek(info.This())->NAME))); }
@@ -83,16 +83,16 @@
 #define NANX_MEMBER_UINT32_SET(TYPE, NAME) static NAN_SETTER(_set_##NAME) { Peek(info.This())->NAME = static_cast<TYPE>(value->Uint32Value()); }
 
 #define NANX_MEMBER_STRING(NAME) NANX_MEMBER_STRING_GET(NAME) NANX_MEMBER_STRING_SET(NAME)
-#define NANX_MEMBER_STRING_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::String>(Unwrap(info.This())->m_wrap_##NAME)); }
-#define NANX_MEMBER_STRING_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::String>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
+#define NANX_MEMBER_STRING_GET(NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::String>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_STRING_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::String>()); info.GetReturnValue().Set(value); }
 
 #define NANX_MEMBER_OBJECT(NAME) NANX_MEMBER_OBJECT_GET(NAME) NANX_MEMBER_OBJECT_SET(NAME)
-#define NANX_MEMBER_OBJECT_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Object>(Unwrap(info.This())->m_wrap_##NAME)); }
-#define NANX_MEMBER_OBJECT_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Object>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
+#define NANX_MEMBER_OBJECT_GET(NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Object>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_OBJECT_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Object>()); info.GetReturnValue().Set(value); }
 
 #define NANX_MEMBER_ARRAY(NAME) NANX_MEMBER_ARRAY_GET(NAME) NANX_MEMBER_ARRAY_SET(NAME)
-#define NANX_MEMBER_ARRAY_GET(NAME) static NAN_GETTER(_get_##NAME) { Unwrap(info.This())->SyncPull(); info.GetReturnValue().Set(Nan::New<v8::Array>(Unwrap(info.This())->m_wrap_##NAME)); }
-#define NANX_MEMBER_ARRAY_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Array>()); Unwrap(info.This())->SyncPush(); info.GetReturnValue().Set(value); }
+#define NANX_MEMBER_ARRAY_GET(NAME) static NAN_GETTER(_get_##NAME) { info.GetReturnValue().Set(Nan::New<v8::Array>(Unwrap(info.This())->m_wrap_##NAME)); }
+#define NANX_MEMBER_ARRAY_SET(NAME) static NAN_SETTER(_set_##NAME) { Unwrap(info.This())->m_wrap_##NAME.Reset(value.As<v8::Array>()); info.GetReturnValue().Set(value); }
 
 #define NANX_bool(value)		((value)->BooleanValue())
 #define NANX_int(value)			((value)->Int32Value())
@@ -138,8 +138,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapVec2* wrap = new WrapVec2();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Vec2& v2)
@@ -147,8 +145,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapVec2* wrap = new WrapVec2(v2);
-		wrap->Wrap(instance);
+		WrapVec2* wrap = Unwrap(instance);
+		wrap->SetVec2(v2);
 		return scope.Escape(instance);
 	}
 private:
@@ -325,8 +323,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapRot* wrap = new WrapRot();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Rot& rot)
@@ -334,8 +330,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapRot* wrap = new WrapRot(rot);
-		wrap->Wrap(instance);
+		WrapRot* wrap = Unwrap(instance);
+		wrap->SetRot(rot);
 		return scope.Escape(instance);
 	}
 private:
@@ -467,8 +463,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapTransform* wrap = new WrapTransform();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Transform& xf)
@@ -476,9 +470,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapTransform* wrap = new WrapTransform();
+		WrapTransform* wrap = Unwrap(instance);
 		wrap->SetTransform(xf);
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -605,8 +598,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapAABB* wrap = new WrapAABB();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2AABB& mass_data)
@@ -614,9 +605,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapAABB* wrap = new WrapAABB();
+		WrapAABB* wrap = Unwrap(instance);
 		wrap->SetAABB(mass_data);
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -748,8 +738,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMassData* wrap = new WrapMassData();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2MassData& mass_data)
@@ -757,9 +745,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMassData* wrap = new WrapMassData();
+		WrapMassData* wrap = Unwrap(instance);
 		wrap->SetMassData(mass_data);
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -874,8 +861,6 @@ public:
 //		Nan::EscapableHandleScope scope;
 //		v8::Local<v8::Function> constructor = GetConstructor();
 //		v8::Local<v8::Object> instance = constructor->NewInstance();
-//		WrapShape* wrap = new WrapShape();
-//		wrap->Wrap(instance);
 //		return scope.Escape(instance);
 //	}
 //	static v8::Local<v8::Object> NewInstance(const b2Shape& shape)
@@ -883,9 +868,8 @@ public:
 //		Nan::EscapableHandleScope scope;
 //		v8::Local<v8::Function> constructor = GetConstructor();
 //		v8::Local<v8::Object> instance = constructor->NewInstance();
-//		WrapShape* wrap = new WrapShape();
+//		WrapShape* wrap = Unwrap(instance);
 //		wrap->SetShape(shape);
-//		wrap->Wrap(instance);
 //		return scope.Escape(instance);
 //	}
 public:
@@ -988,8 +972,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapCircleShape* wrap = new WrapCircleShape();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(float32 radius)
@@ -997,8 +979,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapCircleShape* wrap = new WrapCircleShape(radius);
-		wrap->Wrap(instance);
+		WrapCircleShape* wrap = Unwrap(instance);
+		wrap->m_circle.m_radius = radius;
 		return scope.Escape(instance);
 	}
 private:
@@ -1113,8 +1095,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapEdgeShape* wrap = new WrapEdgeShape();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -1220,8 +1200,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapPolygonShape* wrap = new WrapPolygonShape();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -1374,8 +1352,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapChainShape* wrap = new WrapChainShape();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -1512,8 +1488,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapFilter* wrap = new WrapFilter();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Filter& o)
@@ -1521,8 +1495,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapFilter* wrap = new WrapFilter();
-		wrap->Wrap(instance);
+		WrapFilter* wrap = Unwrap(instance);
 		wrap->SetFilter(o);
 		return scope.Escape(instance);
 	}
@@ -1570,7 +1543,7 @@ class WrapFixtureDef : public Nan::ObjectWrap
 {
 private:
 	b2FixtureDef m_fd;
-	Nan::Persistent<v8::Object> m_wrap_shape;		// m_fd.shape
+	Nan::Persistent<v8::Object> m_wrap_shape;	// m_fd.shape
 	Nan::Persistent<v8::Value> m_wrap_userData;	// m_fd.userData
 	Nan::Persistent<v8::Object> m_wrap_filter;	// m_fd.filter
 private:
@@ -1609,7 +1582,7 @@ public:
 	void SyncPush()
 	{
 		// sync: push data into javascript objects
-		//WrapFilter::Unwrap(Nan::New<v8::Object>(m_wrap_filter))->SetFilter(m_fd.filter);
+		WrapFilter::Unwrap(Nan::New<v8::Object>(m_wrap_filter))->SetFilter(m_fd.filter);
 		if (m_fd.shape)
 		{
 			// TODO: m_wrap_shape.Reset(WrapShape::GetWrap(m_fd.shape)->handle());
@@ -1760,8 +1733,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapFixture* wrap = new WrapFixture();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -2127,8 +2098,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapBody* wrap = new WrapBody();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 
@@ -2980,8 +2949,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapRevoluteJoint* wrap = new WrapRevoluteJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -3282,8 +3249,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapPrismaticJoint* wrap = new WrapPrismaticJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -3566,8 +3531,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapDistanceJoint* wrap = new WrapDistanceJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -3726,8 +3689,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapPulleyJointDef* wrap = new WrapPulleyJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -3841,8 +3802,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapPulleyJoint* wrap = new WrapPulleyJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -3979,8 +3938,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMouseJointDef* wrap = new WrapMouseJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4074,8 +4031,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMouseJoint* wrap = new WrapMouseJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4218,8 +4173,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapGearJointDef* wrap = new WrapGearJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4318,8 +4271,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapGearJoint* wrap = new WrapGearJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4466,8 +4417,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWheelJointDef* wrap = new WrapWheelJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4584,8 +4533,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWheelJoint* wrap = new WrapWheelJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4776,8 +4723,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWeldJointDef* wrap = new WrapWeldJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -4881,8 +4826,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWeldJoint* wrap = new WrapWeldJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5025,8 +4968,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapFrictionJointDef* wrap = new WrapFrictionJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5128,8 +5069,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapFrictionJoint* wrap = new WrapFrictionJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5265,8 +5204,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapRopeJointDef* wrap = new WrapRopeJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5356,8 +5293,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapRopeJoint* wrap = new WrapRopeJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5486,8 +5421,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMotorJointDef* wrap = new WrapMotorJointDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5593,8 +5526,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapMotorJoint* wrap = new WrapMotorJoint();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5721,9 +5652,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapContactID* wrap = new WrapContactID();
+		WrapContactID* wrap = Unwrap(instance);
 		wrap->m_contact_id = contact_id;
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5819,10 +5749,9 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapManifoldPoint* wrap = new WrapManifoldPoint();
+		WrapManifoldPoint* wrap = Unwrap(instance);
 		wrap->m_manifold_point = manifold_point; // struct copy
 		wrap->SyncPush();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -5943,9 +5872,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapManifold* wrap = new WrapManifold();
-		wrap->Wrap(instance);
-		wrap->SyncPush();
+		//wrap->SyncPush();
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Manifold& manifold)
@@ -5953,8 +5880,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapManifold* wrap = new WrapManifold();
-		wrap->Wrap(instance);
+		WrapManifold* wrap = Unwrap(instance);
 		wrap->m_manifold = manifold; // struct copy
 		wrap->SyncPush();
 		return scope.Escape(instance);
@@ -6085,9 +6011,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWorldManifold* wrap = new WrapWorldManifold();
-		wrap->Wrap(instance);
-		wrap->SyncPush();
+		//wrap->SyncPush();
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2WorldManifold& world_manifold)
@@ -6095,8 +6019,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWorldManifold* wrap = new WrapWorldManifold();
-		wrap->Wrap(instance);
+		WrapWorldManifold* wrap = Unwrap(instance);
 		wrap->m_world_manifold = world_manifold; // struct copy
 		wrap->SyncPush();
 		return scope.Escape(instance);
@@ -6187,8 +6110,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapContact* wrap = new WrapContact();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(b2Contact* contact)
@@ -6196,8 +6117,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapContact* wrap = new WrapContact();
-		wrap->Wrap(instance);
+		WrapContact* wrap = Unwrap(instance);
 		wrap->m_contact = contact; // struct copy
 		return scope.Escape(instance);
 	}
@@ -6383,9 +6303,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapContactImpulse* wrap = new WrapContactImpulse();
-		wrap->Wrap(instance);
-		wrap->SyncPush();
+		//wrap->SyncPush();
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2ContactImpulse& contact_impulse)
@@ -6393,8 +6311,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapContactImpulse* wrap = new WrapContactImpulse();
-		wrap->Wrap(instance);
+		WrapContactImpulse* wrap = Unwrap(instance);
 		wrap->m_contact_impulse = contact_impulse; // struct copy
 		wrap->SyncPush();
 		return scope.Escape(instance);
@@ -6474,8 +6391,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapColor* wrap = new WrapColor();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 	static v8::Local<v8::Object> NewInstance(const b2Color& color)
@@ -6483,8 +6398,7 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapColor* wrap = new WrapColor();
-		wrap->Wrap(instance);
+		WrapColor* wrap = Unwrap(instance);
 		wrap->SetColor(color);
 		return scope.Escape(instance);
 	}
@@ -6527,6 +6441,7 @@ private:
 	b2ParticleColor m_particle_color;
 private:
 	WrapParticleColor() {}
+	WrapParticleColor(const b2ParticleColor& particle_color) : m_particle_color(particle_color) {}
 	WrapParticleColor(uint8 r, uint8 g, uint8 b, uint8 a) : m_particle_color(r, g, b, a) {}
 	~WrapParticleColor() {}
 public:
@@ -6574,18 +6489,15 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleColor* wrap = new WrapParticleColor();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
-	static v8::Local<v8::Object> NewInstance(const b2ParticleColor& color)
+	static v8::Local<v8::Object> NewInstance(const b2ParticleColor& particle_color)
 	{
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleColor* wrap = new WrapParticleColor();
-		wrap->Wrap(instance);
-		wrap->SetParticleColor(color);
+		WrapParticleColor* wrap = Unwrap(instance);
+		wrap->SetParticleColor(particle_color);
 		return scope.Escape(instance);
 	}
 private:
@@ -6593,6 +6505,10 @@ private:
 	{
 		if (info.IsConstructCall())
 		{
+			//uint8 r = (info.Length() > 0) ? (uint8) info[0]->NumberValue() : 0;
+			//uint8 g = (info.Length() > 1) ? (uint8) info[1]->NumberValue() : 0;
+			//uint8 b = (info.Length() > 2) ? (uint8) info[2]->NumberValue() : 0;
+			//uint8 a = (info.Length() > 3) ? (uint8) info[3]->NumberValue() : 0;
 			uint8 r = (info.Length() > 0) ? NANX_uint8(info[0]) : 0;
 			uint8 g = (info.Length() > 1) ? NANX_uint8(info[1]) : 0;
 			uint8 b = (info.Length() > 2) ? NANX_uint8(info[2]) : 0;
@@ -6702,8 +6618,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleDef* wrap = new WrapParticleDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -6779,8 +6693,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleHandle* wrap = new WrapParticleHandle();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -6865,7 +6777,7 @@ public:
 		}
 		else
 		{
-			m_wrap_shape.Reset();
+			// TODO: m_wrap_shape.Reset();
 		}
 		//m_pgd.userData; // not used
 	}
@@ -6923,8 +6835,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleGroupDef* wrap = new WrapParticleGroupDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -7055,8 +6965,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleGroup* wrap = new WrapParticleGroup();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -7196,8 +7104,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleSystemDef* wrap = new WrapParticleSystemDef();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -7328,8 +7234,6 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapParticleSystem* wrap = new WrapParticleSystem();
-		wrap->Wrap(instance);
 		return scope.Escape(instance);
 	}
 private:
@@ -7433,6 +7337,11 @@ private:
 		WrapParticleSystem* wrap = Unwrap(info.This());
 		#if NODE_VERSION_AT_LEAST(4, 0, 0)
 		v8::Local<v8::Float32Array> _buffer = v8::Local<v8::Float32Array>::Cast(info[0]);
+		if (!_buffer->HasBuffer())
+		{
+			_buffer->Get(NANX_SYMBOL("buffer"));
+			assert(_buffer->HasBuffer());
+		}
 		int32 capacity = NANX_int32(info[1]);
 		b2Vec2* buffer = reinterpret_cast<b2Vec2*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
 		#else
@@ -7448,6 +7357,11 @@ private:
 		WrapParticleSystem* wrap = Unwrap(info.This());
 		#if NODE_VERSION_AT_LEAST(4, 0, 0)
 		v8::Local<v8::Float32Array> _buffer = v8::Local<v8::Float32Array>::Cast(info[0]);
+		if (!_buffer->HasBuffer())
+		{
+			_buffer->Get(NANX_SYMBOL("buffer"));
+			assert(_buffer->HasBuffer());
+		}
 		int32 capacity = NANX_int32(info[1]);
 		b2Vec2* buffer = reinterpret_cast<b2Vec2*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
 		#else
@@ -7463,6 +7377,11 @@ private:
 		WrapParticleSystem* wrap = Unwrap(info.This());
 		#if NODE_VERSION_AT_LEAST(4, 0, 0)
 		v8::Local<v8::Uint8Array> _buffer = v8::Local<v8::Uint8Array>::Cast(info[0]);
+		if (!_buffer->HasBuffer())
+		{
+			_buffer->Get(NANX_SYMBOL("buffer"));
+			assert(_buffer->HasBuffer());
+		}
 		int32 capacity = NANX_int32(info[1]);
 		b2ParticleColor* buffer = reinterpret_cast<b2ParticleColor*>(static_cast<char*>(_buffer->Buffer()->GetContents().Data()) + _buffer->ByteOffset());
 		#else
@@ -7515,10 +7434,10 @@ private:
 	class WrapDestructionListener : public b2DestructionListener
 	{
 	public:
-		WrapWorld* m_that;
+		WrapWorld* m_wrap_world;
 	public:
-		WrapDestructionListener(WrapWorld* wrap) : m_that(wrap) {}
-		~WrapDestructionListener() { m_that = NULL; }
+		WrapDestructionListener(WrapWorld* wrap) : m_wrap_world(wrap) {}
+		~WrapDestructionListener() { m_wrap_world = NULL; }
 	public:
 		virtual void SayGoodbye(b2Joint* joint);
 		virtual void SayGoodbye(b2Fixture* fixture);
@@ -7532,10 +7451,10 @@ private:
 	class WrapContactFilter : public b2ContactFilter
 	{
 	public:
-		WrapWorld* m_that;
+		WrapWorld* m_wrap_world;
 	public:
-		WrapContactFilter(WrapWorld* wrap) : m_that(wrap) {}
-		~WrapContactFilter() { m_that = NULL; }
+		WrapContactFilter(WrapWorld* wrap) : m_wrap_world(wrap) {}
+		~WrapContactFilter() { m_wrap_world = NULL; }
 	public:
 		virtual bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB);
 		#if B2_ENABLE_PARTICLE
@@ -7548,10 +7467,10 @@ private:
 	class WrapContactListener : public b2ContactListener
 	{
 	public:
-		WrapWorld* m_that;
+		WrapWorld* m_wrap_world;
 	public:
-		WrapContactListener(WrapWorld* wrap) : m_that(wrap) {}
-		~WrapContactListener() { m_that = NULL; }
+		WrapContactListener(WrapWorld* wrap) : m_wrap_world(wrap) {}
+		~WrapContactListener() { m_wrap_world = NULL; }
 	public:
 		virtual void BeginContact(b2Contact* contact);
 		virtual void EndContact(b2Contact* contact);
@@ -7569,10 +7488,10 @@ private:
 	class WrapDraw : public b2Draw
 	{
 	public:
-		WrapWorld* m_that;
+		WrapWorld* m_wrap_world;
 	public:
-		WrapDraw(WrapWorld* wrap) : m_that(wrap) {}
-		~WrapDraw() { m_that = NULL; }
+		WrapDraw(WrapWorld* wrap) : m_wrap_world(wrap) {}
+		~WrapDraw() { m_wrap_world = NULL; }
 	public:
 		virtual void DrawPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
 		virtual void DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color);
@@ -7769,8 +7688,8 @@ public:
 		Nan::EscapableHandleScope scope;
 		v8::Local<v8::Function> constructor = GetConstructor();
 		v8::Local<v8::Object> instance = constructor->NewInstance();
-		WrapWorld* wrap = new WrapWorld(gravity);
-		wrap->Wrap(instance);
+		WrapWorld* wrap = Unwrap(instance);
+		wrap->m_world.SetGravity(gravity);
 		return scope.Escape(instance);
 	}
 private:
@@ -8368,9 +8287,9 @@ private:
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2Joint* joint)
 {
-	if (!m_that->m_destruction_listener.IsEmpty())
+	if (!m_wrap_world->m_destruction_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_destruction_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeJoint")));
 		// get joint internal data
 		WrapJoint* wrap_joint = WrapJoint::GetWrap(joint);
@@ -8382,9 +8301,9 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2Joint* joint)
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2Fixture* fixture)
 {
-	if (!m_that->m_destruction_listener.IsEmpty())
+	if (!m_wrap_world->m_destruction_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_destruction_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeFixture")));
 		// get fixture internal data
 		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
@@ -8398,9 +8317,9 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2Fixture* fixture)
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleGroup* group)
 {
-	if (!m_that->m_destruction_listener.IsEmpty())
+	if (!m_wrap_world->m_destruction_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_destruction_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeParticleGroup")));
 		// get particle group internal data
 		WrapParticleGroup* wrap_group = WrapParticleGroup::GetWrap(group);
@@ -8412,9 +8331,9 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleGroup* group)
 
 void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleSystem* particleSystem, int32 index)
 {
-	if (!m_that->m_destruction_listener.IsEmpty())
+	if (!m_wrap_world->m_destruction_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_destruction_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_destruction_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("SayGoodbyeParticle")));
 		// TODO: get particle system internal data
 		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
@@ -8428,9 +8347,9 @@ void WrapWorld::WrapDestructionListener::SayGoodbye(b2ParticleSystem* particleSy
 
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB)
 {
-	if (!m_that->m_contact_filter.IsEmpty())
+	if (!m_wrap_world->m_contact_filter.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_filter);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollide")));
 		// get fixture internal data
 		WrapFixture* wrap_fixtureA = WrapFixture::GetWrap(fixtureA);
@@ -8447,15 +8366,15 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixtureA, b2Fixture*
 
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 particleIndex)
 {
-	if (!m_that->m_contact_filter.IsEmpty())
+	if (!m_wrap_world->m_contact_filter.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_filter);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollideFixtureParticle")));
 		// get fixture internal data
 		WrapFixture* wrap_fixture = WrapFixture::GetWrap(fixture);
 		v8::Local<v8::Object> h_fixture = wrap_fixture->handle();
 		// TODO: get particle system internal data
-		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Object> h_system = wrap_system->handle();
 		///	v8::Local<v8::Value> argv[] = { h_fixture, h_system, Nan::New(particleIndex) };
 		///	return NANX_bool(Nan::MakeCallback(h_that, h_method, countof(argv), argv));
@@ -8465,12 +8384,12 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2Fixture* fixture, b2ParticleS
 
 bool WrapWorld::WrapContactFilter::ShouldCollide(b2ParticleSystem* particleSystem, int32 particleIndexA, int32 particleIndexB)
 {
-	if (!m_that->m_contact_filter.IsEmpty())
+	if (!m_wrap_world->m_contact_filter.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_filter);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_filter);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("ShouldCollideParticleParticle")));
 		// TODO: get particle system internal data
-		///	WrapParticleSystem* wrap_system = static_cast<WrapParticleSystem*>(particleSystem->GetUserData());
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Object> h_system = wrap_system->handle();
 		///	v8::Local<v8::Value> argv[] = { h_system, Nan::New(particleIndexA), Nan::New(particleIndexB) };
 		///	return NANX_bool(Nan::MakeCallback(h_that, h_method, countof(argv), argv));
@@ -8482,9 +8401,9 @@ bool WrapWorld::WrapContactFilter::ShouldCollide(b2ParticleSystem* particleSyste
 
 void WrapWorld::WrapContactListener::BeginContact(b2Contact* contact)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContact")));
 		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
 		v8::Local<v8::Value> argv[] = { h_contact };
@@ -8494,9 +8413,9 @@ void WrapWorld::WrapContactListener::BeginContact(b2Contact* contact)
 
 void WrapWorld::WrapContactListener::EndContact(b2Contact* contact)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContact")));
 		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
 		v8::Local<v8::Value> argv[] = { h_contact };
@@ -8508,11 +8427,12 @@ void WrapWorld::WrapContactListener::EndContact(b2Contact* contact)
 
 void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleBodyContact* particleBodyContact)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContactFixtureParticle")));
 		// TODO: get particle system internal data, wrap b2ParticleBodyContact
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Value> argv[] = {};
 		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
@@ -8520,11 +8440,12 @@ void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSyst
 
 void WrapWorld::WrapContactListener::EndContact(b2Fixture* fixture, b2ParticleSystem* particleSystem, int32 index)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContactFixtureParticle")));
 		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Value> argv[] = {};
 		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
@@ -8532,11 +8453,12 @@ void WrapWorld::WrapContactListener::EndContact(b2Fixture* fixture, b2ParticleSy
 
 void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSystem, b2ParticleContact* particleContact)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("BeginContactParticleParticle")));
 		// TODO: get particle system internal data, wrap b2ParticleContact
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Value> argv[] = {};
 		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
@@ -8544,11 +8466,12 @@ void WrapWorld::WrapContactListener::BeginContact(b2ParticleSystem* particleSyst
 
 void WrapWorld::WrapContactListener::EndContact(b2ParticleSystem* particleSystem, int32 indexA, int32 indexB)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("EndContactParticleParticle")));
 		// TODO: get particle system internal data
+		///	WrapParticleSystem* wrap_system = WrapParticleSystem::GetWrap(particleSystem);
 		///	v8::Local<v8::Value> argv[] = {};
 		///	Nan::MakeCallback(h_that, h_method, countof(argv), argv);
 	}
@@ -8558,9 +8481,9 @@ void WrapWorld::WrapContactListener::EndContact(b2ParticleSystem* particleSystem
 
 void WrapWorld::WrapContactListener::PreSolve(b2Contact* contact, const b2Manifold* oldManifold)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("PreSolve")));
 		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
 		v8::Local<v8::Object> h_oldManifold = WrapManifold::NewInstance(*oldManifold);
@@ -8571,9 +8494,9 @@ void WrapWorld::WrapContactListener::PreSolve(b2Contact* contact, const b2Manifo
 
 void WrapWorld::WrapContactListener::PostSolve(b2Contact* contact, const b2ContactImpulse* impulse)
 {
-	if (!m_that->m_contact_listener.IsEmpty())
+	if (!m_wrap_world->m_contact_listener.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_contact_listener);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_contact_listener);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("PostSolve")));
 		v8::Local<v8::Object> h_contact = WrapContact::NewInstance(contact);
 		v8::Local<v8::Object> h_impulse = WrapContactImpulse::NewInstance(*impulse);
@@ -8584,9 +8507,9 @@ void WrapWorld::WrapContactListener::PostSolve(b2Contact* contact, const b2Conta
 
 void WrapWorld::WrapDraw::DrawPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawPolygon")));
 		v8::Local<v8::Array> h_vertices = Nan::New<v8::Array>(vertexCount);
 		for (int i = 0; i < vertexCount; ++i)
@@ -8602,9 +8525,9 @@ void WrapWorld::WrapDraw::DrawPolygon(const b2Vec2* vertices, int32 vertexCount,
 
 void WrapWorld::WrapDraw::DrawSolidPolygon(const b2Vec2* vertices, int32 vertexCount, const b2Color& color)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSolidPolygon")));
 		v8::Local<v8::Array> h_vertices = Nan::New<v8::Array>(vertexCount);
 		for (int i = 0; i < vertexCount; ++i)
@@ -8620,9 +8543,9 @@ void WrapWorld::WrapDraw::DrawSolidPolygon(const b2Vec2* vertices, int32 vertexC
 
 void WrapWorld::WrapDraw::DrawCircle(const b2Vec2& center, float32 radius, const b2Color& color)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawCircle")));
 		v8::Local<v8::Object> h_center = WrapVec2::NewInstance(center);
 		#if defined(_WIN32)
@@ -8637,9 +8560,9 @@ void WrapWorld::WrapDraw::DrawCircle(const b2Vec2& center, float32 radius, const
 
 void WrapWorld::WrapDraw::DrawSolidCircle(const b2Vec2& center, float32 radius, const b2Vec2& axis, const b2Color& color)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSolidCircle")));
 		v8::Local<v8::Object> h_center = WrapVec2::NewInstance(center);
 		#if defined(_WIN32)
@@ -8656,9 +8579,9 @@ void WrapWorld::WrapDraw::DrawSolidCircle(const b2Vec2& center, float32 radius, 
 #if B2_ENABLE_PARTICLE
 void WrapWorld::WrapDraw::DrawParticles(const b2Vec2 *centers, float32 radius, const b2ParticleColor *colors, int32 count)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawParticles")));
 		v8::Local<v8::Array> h_centers = Nan::New<v8::Array>(count);
 		for (int i = 0; i < count; ++i)
@@ -8691,9 +8614,9 @@ void WrapWorld::WrapDraw::DrawParticles(const b2Vec2 *centers, float32 radius, c
 
 void WrapWorld::WrapDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const b2Color& color)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawSegment")));
 		v8::Local<v8::Object> h_p1 = WrapVec2::NewInstance(p1);
 		v8::Local<v8::Object> h_p2 = WrapVec2::NewInstance(p2);
@@ -8705,9 +8628,9 @@ void WrapWorld::WrapDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2, const 
 
 void WrapWorld::WrapDraw::DrawTransform(const b2Transform& xf)
 {
-	if (!m_that->m_draw.IsEmpty())
+	if (!m_wrap_world->m_draw.IsEmpty())
 	{
-		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_that->m_draw);
+		v8::Local<v8::Object> h_that = Nan::New<v8::Object>(m_wrap_world->m_draw);
 		v8::Local<v8::Function> h_method = v8::Local<v8::Function>::Cast(h_that->Get(NANX_SYMBOL("DrawTransform")));
 		v8::Local<v8::Object> h_xf = WrapTransform::NewInstance(xf);
 		v8::Local<v8::Value> argv[] = { h_xf };
@@ -8810,6 +8733,7 @@ NANX_EXPORT(b2GetPointStates)
 
 NANX_EXPORT(b2TestOverlap_AABB)
 {
+	// TODO
 	info.GetReturnValue().Set(Nan::New(false));
 }
 
@@ -8841,7 +8765,6 @@ NANX_EXPORT(b2CalculateParticleIterations)
 
 NAN_MODULE_INIT(init)
 {
-
 	NANX_CONSTANT(target, b2_maxFloat);
 	NANX_CONSTANT(target, b2_epsilon);
 	NANX_CONSTANT(target, b2_pi);
@@ -8875,12 +8798,12 @@ NAN_MODULE_INIT(init)
 
 	v8::Local<v8::Object> WrapShapeType = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2ShapeType"), WrapShapeType);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_unknownShape,		-1);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_circleShape,		b2Shape::e_circle);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_edgeShape,		b2Shape::e_edge);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_polygonShape,		b2Shape::e_polygon);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_chainShape,		b2Shape::e_chain);
-	NANX_CONSTANT_VALUE(WrapShapeType, e_shapeTypeCount,	b2Shape::e_typeCount);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_unknownShape, -1);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_circleShape, b2Shape::e_circle);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_edgeShape, b2Shape::e_edge);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_polygonShape, b2Shape::e_polygon);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_chainShape, b2Shape::e_chain);
+	NANX_CONSTANT_VALUE(WrapShapeType, e_shapeTypeCount, b2Shape::e_typeCount);
 
 	v8::Local<v8::Object> WrapBodyType = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2BodyType"), WrapBodyType);
@@ -8912,9 +8835,9 @@ NAN_MODULE_INIT(init)
 
 	v8::Local<v8::Object> WrapManifoldType = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2ManifoldType"), WrapManifoldType);
-	NANX_CONSTANT_VALUE(WrapManifoldType, e_circles,	b2Manifold::e_circles);
-	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceA,	b2Manifold::e_faceA);
-	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceB,	b2Manifold::e_faceB);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_circles, b2Manifold::e_circles);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceA, b2Manifold::e_faceA);
+	NANX_CONSTANT_VALUE(WrapManifoldType, e_faceB, b2Manifold::e_faceB);
 
 	v8::Local<v8::Object> WrapPointState = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2PointState"), WrapPointState);
@@ -8925,13 +8848,13 @@ NAN_MODULE_INIT(init)
 
 	v8::Local<v8::Object> WrapDrawFlags = Nan::New<v8::Object>();
 	Nan::Set(target, NANX_SYMBOL("b2DrawFlags"), WrapDrawFlags);
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_shapeBit,		b2Draw::e_shapeBit);
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_jointBit,		b2Draw::e_jointBit);
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit,			b2Draw::e_aabbBit);
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_pairBit,			b2Draw::e_pairBit);
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit,	b2Draw::e_centerOfMassBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_shapeBit, b2Draw::e_shapeBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_jointBit, b2Draw::e_jointBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_aabbBit, b2Draw::e_aabbBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_pairBit, b2Draw::e_pairBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_centerOfMassBit, b2Draw::e_centerOfMassBit);
 	#if B2_ENABLE_PARTICLE
-	NANX_CONSTANT_VALUE(WrapDrawFlags, e_particleBit,		b2Draw::e_particleBit);
+	NANX_CONSTANT_VALUE(WrapDrawFlags, e_particleBit, b2Draw::e_particleBit);
 	#endif
 
 	#if B2_ENABLE_PARTICLE
