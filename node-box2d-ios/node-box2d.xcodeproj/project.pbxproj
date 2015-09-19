@@ -428,11 +428,11 @@
 				HEADER_SEARCH_PATHS = (
 					.,
 					../../nan,
-					../../../node/src,
-					../../../node/deps/uv/include,
-					../../../node/deps/v8/include,
-					"../../../node/deps/debugger-agent/include",
-					../../../node/deps/cares/include,
+					"../../../node-v0.x-archive/src",
+					"../../../node-v0.x-archive/deps/uv/include",
+					"../../../node-v0.x-archive/deps/v8/include",
+					"../../../node-v0.x-archive/deps/debugger-agent/include",
+					"../../../node-v0.x-archive/deps/cares/include",
 					box2d/Box2D,
 				);
 				"OTHER_CFLAGS[arch=arm64]" = "-marm";
@@ -503,11 +503,11 @@
 				HEADER_SEARCH_PATHS = (
 					.,
 					../../nan,
-					../../../node/src,
-					../../../node/deps/uv/include,
-					../../../node/deps/v8/include,
-					"../../../node/deps/debugger-agent/include",
-					../../../node/deps/cares/include,
+					"../../../node-v0.x-archive/src",
+					"../../../node-v0.x-archive/deps/uv/include",
+					"../../../node-v0.x-archive/deps/v8/include",
+					"../../../node-v0.x-archive/deps/debugger-agent/include",
+					"../../../node-v0.x-archive/deps/cares/include",
 					box2d/Box2D,
 				);
 				"OTHER_CFLAGS[arch=arm64]" = "-marm";
