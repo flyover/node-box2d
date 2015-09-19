@@ -1543,9 +1543,9 @@ class WrapFixtureDef : public Nan::ObjectWrap
 {
 private:
 	b2FixtureDef m_fd;
-	Nan::Persistent<v8::Object> m_wrap_shape;	// m_fd.shape
-	Nan::Persistent<v8::Value> m_wrap_userData;	// m_fd.userData
-	Nan::Persistent<v8::Object> m_wrap_filter;	// m_fd.filter
+	Nan::Persistent<v8::Object> m_wrap_shape; // m_fd.shape
+	Nan::Persistent<v8::Value> m_wrap_userData; // m_fd.userData
+	Nan::Persistent<v8::Object> m_wrap_filter; // m_fd.filter
 private:
 	WrapFixtureDef()
 	{
@@ -1925,9 +1925,9 @@ class WrapBodyDef : public Nan::ObjectWrap
 {
 private:
 	b2BodyDef m_bd;
-	Nan::Persistent<v8::Object> m_wrap_position;			// m_bd.position
-	Nan::Persistent<v8::Object> m_wrap_linearVelocity;	// m_bd.linearVelocity
-	Nan::Persistent<v8::Value> m_wrap_userData;			// m_bd.userData
+	Nan::Persistent<v8::Object> m_wrap_position; // m_bd.position
+	Nan::Persistent<v8::Object> m_wrap_linearVelocity; // m_bd.linearVelocity
+	Nan::Persistent<v8::Value> m_wrap_userData; // m_bd.userData
 private:
 	WrapBodyDef()
 	{
@@ -2455,9 +2455,9 @@ private:
 class WrapJointDef : public Nan::ObjectWrap
 {
 protected:
-	Nan::Persistent<v8::Value> m_wrap_userData;	// m_jd.userData
-	Nan::Persistent<v8::Object> m_wrap_bodyA;		// m_jd.bodyA
-	Nan::Persistent<v8::Object> m_wrap_bodyB;		// m_jd.bodyB
+	Nan::Persistent<v8::Value> m_wrap_userData; // m_jd.userData
+	Nan::Persistent<v8::Object> m_wrap_bodyA; // m_jd.bodyA
+	Nan::Persistent<v8::Object> m_wrap_bodyB; // m_jd.bodyB
 public:
 	WrapJointDef() {}
 	~WrapJointDef()
@@ -3062,7 +3062,7 @@ private:
 	b2PrismaticJointDef m_prismatic_jd;
 	Nan::Persistent<v8::Object> m_wrap_localAnchorA; // m_prismatic_jd.localAnchorA
 	Nan::Persistent<v8::Object> m_wrap_localAnchorB; // m_prismatic_jd.localAnchorB
-	Nan::Persistent<v8::Object> m_wrap_localAxisA;	// m_prismatic_jd.localAxisA
+	Nan::Persistent<v8::Object> m_wrap_localAxisA; // m_prismatic_jd.localAxisA
 private:
 	WrapPrismaticJointDef()
 	{
@@ -5681,8 +5681,8 @@ class WrapManifoldPoint : public Nan::ObjectWrap
 {
 public:
 	b2ManifoldPoint m_manifold_point;
-	Nan::Persistent<v8::Object> m_wrap_localPoint;	// m_manifold_point.localPoint
-	Nan::Persistent<v8::Object> m_wrap_id;			// m_manifold_point.id
+	Nan::Persistent<v8::Object> m_wrap_localPoint; // m_manifold_point.localPoint
+	Nan::Persistent<v8::Object> m_wrap_id; // m_manifold_point.id
 private:
 	WrapManifoldPoint()
 	{
@@ -5781,9 +5781,9 @@ class WrapManifold : public Nan::ObjectWrap
 {
 public:
 	b2Manifold m_manifold;
-	Nan::Persistent<v8::Array> m_wrap_points;		// m_manifold.points
-	Nan::Persistent<v8::Object> m_wrap_localNormal;	// m_manifold.localNormal
-	Nan::Persistent<v8::Object> m_wrap_localPoint;	// m_manifold.localPoint
+	Nan::Persistent<v8::Array> m_wrap_points; // m_manifold.points
+	Nan::Persistent<v8::Object> m_wrap_localNormal; // m_manifold.localNormal
+	Nan::Persistent<v8::Object> m_wrap_localPoint; // m_manifold.localPoint
 private:
 	WrapManifold()
 	{
@@ -5913,9 +5913,9 @@ class WrapWorldManifold : public Nan::ObjectWrap
 {
 public:
 	b2WorldManifold m_world_manifold;
-	Nan::Persistent<v8::Object> m_wrap_normal;		// m_world_manifold.normal
-	Nan::Persistent<v8::Array> m_wrap_points;		// m_world_manifold.points
-	Nan::Persistent<v8::Array> m_wrap_separations;	// m_world_manifold.separations
+	Nan::Persistent<v8::Object> m_wrap_normal; // m_world_manifold.normal
+	Nan::Persistent<v8::Array> m_wrap_points; // m_world_manifold.points
+	Nan::Persistent<v8::Array> m_wrap_separations; // m_world_manifold.separations
 private:
 	WrapWorldManifold()
 	{
@@ -6220,8 +6220,8 @@ class WrapContactImpulse : public Nan::ObjectWrap
 {
 public:
 	b2ContactImpulse m_contact_impulse;
-	Nan::Persistent<v8::Array> m_wrap_normalImpulses;		// m_contact_impulse.normalImpulses
-	Nan::Persistent<v8::Array> m_wrap_tangentImpulses;	// m_contact_impulse.tangentImpulses
+	Nan::Persistent<v8::Array> m_wrap_normalImpulses; // m_contact_impulse.normalImpulses
+	Nan::Persistent<v8::Array> m_wrap_tangentImpulses; // m_contact_impulse.tangentImpulses
 private:
 	WrapContactImpulse()
 	{
@@ -6505,10 +6505,6 @@ private:
 	{
 		if (info.IsConstructCall())
 		{
-			//uint8 r = (info.Length() > 0) ? (uint8) info[0]->NumberValue() : 0;
-			//uint8 g = (info.Length() > 1) ? (uint8) info[1]->NumberValue() : 0;
-			//uint8 b = (info.Length() > 2) ? (uint8) info[2]->NumberValue() : 0;
-			//uint8 a = (info.Length() > 3) ? (uint8) info[3]->NumberValue() : 0;
 			uint8 r = (info.Length() > 0) ? NANX_uint8(info[0]) : 0;
 			uint8 g = (info.Length() > 1) ? NANX_uint8(info[1]) : 0;
 			uint8 b = (info.Length() > 2) ? NANX_uint8(info[2]) : 0;
@@ -6535,10 +6531,10 @@ class WrapParticleDef : public Nan::ObjectWrap
 {
 private:
 	b2ParticleDef m_pd;
-	Nan::Persistent<v8::Object> m_wrap_position;	// m_pd.position
-	Nan::Persistent<v8::Object> m_wrap_velocity;	// m_pd.velocity
-	Nan::Persistent<v8::Object> m_wrap_color;		// m_pd.color
-	Nan::Persistent<v8::Value> m_wrap_userData;	// m_pd.userData
+	Nan::Persistent<v8::Object> m_wrap_position; // m_pd.position
+	Nan::Persistent<v8::Object> m_wrap_velocity; // m_pd.velocity
+	Nan::Persistent<v8::Object> m_wrap_color; // m_pd.color
+	Nan::Persistent<v8::Value> m_wrap_userData; // m_pd.userData
 private:
 	WrapParticleDef()
 	{
@@ -6723,11 +6719,11 @@ class WrapParticleGroupDef : public Nan::ObjectWrap
 {
 private:
 	b2ParticleGroupDef m_pgd;
-	Nan::Persistent<v8::Object> m_wrap_position;			// m_pgd.position
-	Nan::Persistent<v8::Object> m_wrap_linearVelocity;	// m_pgd.linearVelocity
-	Nan::Persistent<v8::Object> m_wrap_color;				// m_pgd.color
-	Nan::Persistent<v8::Object> m_wrap_shape;				// m_pgd.shape
-	Nan::Persistent<v8::Value> m_wrap_userData;			// m_pgd.userData
+	Nan::Persistent<v8::Object> m_wrap_position; // m_pgd.position
+	Nan::Persistent<v8::Object> m_wrap_linearVelocity; // m_pgd.linearVelocity
+	Nan::Persistent<v8::Object> m_wrap_color; // m_pgd.color
+	Nan::Persistent<v8::Object> m_wrap_shape; // m_pgd.shape
+	Nan::Persistent<v8::Value> m_wrap_userData; // m_pgd.userData
 private:
 	WrapParticleGroupDef()
 	{
@@ -6952,10 +6948,28 @@ public:
 			function_template->SetClassName(NANX_SYMBOL("b2ParticleGroup"));
 			function_template->InstanceTemplate()->SetInternalFieldCount(1);
 			v8::Local<v8::ObjectTemplate> prototype_template = function_template->PrototypeTemplate();
+			//b2ParticleGroup* GetNext();
+			//b2ParticleSystem* GetParticleSystem();
 			NANX_METHOD_APPLY(prototype_template, GetParticleCount)
 			NANX_METHOD_APPLY(prototype_template, GetBufferIndex)
 			NANX_METHOD_APPLY(prototype_template, ContainsParticle)
 			NANX_METHOD_APPLY(prototype_template, DestroyParticles)
+			//uint32 GetAllParticleFlags() const;
+			//uint32 GetGroupFlags() const;
+			//void SetGroupFlags(uint32 flags);
+			//float32 GetMass() const;
+			//float32 GetInertia() const;
+			//b2Vec2 GetCenter() const;
+			//b2Vec2 GetLinearVelocity() const;
+			//float32 GetAngularVelocity() const;
+			//const b2Transform& GetTransform() const;
+			//const b2Vec2& GetPosition() const;
+			//float32 GetAngle() const;
+			//b2Vec2 GetLinearVelocityFromWorldPoint(const b2Vec2& worldPoint) const;
+			//void* GetUserData() const;
+			//void SetUserData(void* data);
+			//void ApplyForce(const b2Vec2& force);
+			//void ApplyLinearImpulse(const b2Vec2& impulse);
 		}
 		v8::Local<v8::FunctionTemplate> function_template = Nan::New<v8::FunctionTemplate>(g_function_template);
 		return scope.Escape(function_template);
