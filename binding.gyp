@@ -4,7 +4,7 @@
 		{
 			'target_name': "node-box2d",
 			'variables': {
-				'BOX2D_PATH': "box2d/Box2D"
+				'BOX2D_PATH': "Box2D/Box2D"
 			},
 			'include_dirs':
 			[
@@ -29,10 +29,13 @@
 				"<(BOX2D_PATH)/Box2D/Collision/Shapes/b2PolygonShape.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2BlockAllocator.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2Draw.cpp",
+				"<(BOX2D_PATH)/Box2D/Common/b2FreeList.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2Math.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2Settings.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2StackAllocator.cpp",
+				"<(BOX2D_PATH)/Box2D/Common/b2Stat.cpp",
 				"<(BOX2D_PATH)/Box2D/Common/b2Timer.cpp",
+				"<(BOX2D_PATH)/Box2D/Common/b2TrackedBlock.cpp",
 				"<(BOX2D_PATH)/Box2D/Dynamics/b2Body.cpp",
 				"<(BOX2D_PATH)/Box2D/Dynamics/b2ContactManager.cpp",
 				"<(BOX2D_PATH)/Box2D/Dynamics/b2Fixture.cpp",
@@ -60,6 +63,11 @@
 				"<(BOX2D_PATH)/Box2D/Dynamics/Joints/b2RopeJoint.cpp",
 				"<(BOX2D_PATH)/Box2D/Dynamics/Joints/b2WeldJoint.cpp",
 				"<(BOX2D_PATH)/Box2D/Dynamics/Joints/b2WheelJoint.cpp",
+				"<(BOX2D_PATH)/Box2D/Particle/b2Particle.cpp",
+				"<(BOX2D_PATH)/Box2D/Particle/b2ParticleAssembly.cpp",
+				"<(BOX2D_PATH)/Box2D/Particle/b2ParticleGroup.cpp",
+				"<(BOX2D_PATH)/Box2D/Particle/b2ParticleSystem.cpp",
+				"<(BOX2D_PATH)/Box2D/Particle/b2VoronoiDiagram.cpp",
 				"<(BOX2D_PATH)/Box2D/Rope/b2Rope.cpp"
 			]
 		}
