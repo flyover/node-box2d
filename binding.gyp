@@ -4,7 +4,7 @@
 		{
 			'target_name': "node-box2d",
 			'variables': {
-				'BOX2D_PATH': "box2d/Box2D"
+				'BOX2D_PATH': "Box2D/Box2D"
 			},
 			'include_dirs':
 			[
