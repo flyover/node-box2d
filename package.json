@@ -1,6 +1,6 @@
 {
   "name": "@flyover/node-box2d",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "author": "Flyover Games",
   "homepage": "http://flyovergames.com",
   "description": "Node Box2D Package",
