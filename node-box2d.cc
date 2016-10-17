@@ -1,27 +1,27 @@
 /**
- * Copyright (c) Flyover Games, LLC.  All rights reserved. 
- *  
- * Permission is hereby granted, free of charge, to any person 
- * obtaining a copy of this software and associated 
- * documentation files (the "Software"), to deal in the Software 
- * without restriction, including without limitation the rights 
- * to use, copy, modify, merge, publish, distribute, sublicense, 
- * and/or sell copies of the Software, and to permit persons to 
- * whom the Software is furnished to do so, subject to the 
- * following conditions: 
- *  
- * The above copyright notice and this permission notice shall 
- * be included in all copies or substantial portions of the 
- * Software. 
- *  
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY 
- * KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE 
- * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR 
- * PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR 
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR 
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
+ * Copyright (c) Flyover Games, LLC.  All rights reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated
+ * documentation files (the "Software"), to deal in the Software
+ * without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to
+ * whom the Software is furnished to do so, subject to the
+ * following conditions:
+ *
+ * The above copyright notice and this permission notice shall
+ * be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+ * KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+ * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+ * PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 #include "node-box2d.h"
@@ -1029,7 +1029,7 @@ private:
 	NANX_MEMBER_OBJECT(m_p) // m_wrap_m_p
 	NANX_METHOD(ComputeMass)
 	{
-		b2CircleShape* circle = Peek(info.This());		
+		b2CircleShape* circle = Peek(info.This());
 		b2MassData* mass_data = WrapMassData::Peek(info[0]);
 		float32 density = NANX_float32(info[1]);
 		circle->ComputeMass(mass_data, density);
@@ -1154,7 +1154,7 @@ private:
 	}
 	NANX_METHOD(ComputeMass)
 	{
-		b2EdgeShape* edge = Peek(info.This());		
+		b2EdgeShape* edge = Peek(info.This());
 		b2MassData* mass_data = WrapMassData::Peek(info[0]);
 		float32 density = NANX_float32(info[1]);
 		edge->ComputeMass(mass_data, density);
@@ -1277,7 +1277,7 @@ private:
 	}
 	NANX_METHOD(ComputeMass)
 	{
-		b2PolygonShape* polygon = Peek(info.This());		
+		b2PolygonShape* polygon = Peek(info.This());
 		b2MassData* mass_data = WrapMassData::Peek(info[0]);
 		float32 density = NANX_float32(info[1]);
 		polygon->ComputeMass(mass_data, density);
@@ -1453,7 +1453,7 @@ private:
 	}
 	NANX_METHOD(ComputeMass)
 	{
-		b2ChainShape* chain = Peek(info.This());		
+		b2ChainShape* chain = Peek(info.This());
 		b2MassData* mass_data = WrapMassData::Peek(info[0]);
 		float32 density = NANX_float32(info[1]);
 		chain->ComputeMass(mass_data, density);
@@ -3725,9 +3725,9 @@ private:
 		float32 ratio = NANX_float32(info[6]);
 		wrap->SyncPull();
 		wrap->m_pulley_jd.Initialize(
-		   wrap_bodyA->Peek(), wrap_bodyB->Peek(), 
-		   wrap_groundAnchorA->GetVec2(), wrap_groundAnchorB->GetVec2(), 
-		   wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2(), 
+		   wrap_bodyA->Peek(), wrap_bodyB->Peek(),
+		   wrap_groundAnchorA->GetVec2(), wrap_groundAnchorB->GetVec2(),
+		   wrap_anchorA->GetVec2(), wrap_anchorB->GetVec2(),
 		   ratio);
 		wrap->SyncPush();
 	}
